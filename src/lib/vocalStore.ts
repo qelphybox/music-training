@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import type { Json } from '@/lib/database.types'
+import type { Grid } from '@/training/vocal/edit'
 import type { PartNote } from '@/training/vocal/part'
 
 /**
@@ -14,6 +15,8 @@ export interface VocalTraining {
   readonly id: string
   readonly title: string
   readonly notes: readonly PartNote[]
+  /** The beat grid the teacher set, when there is one. */
+  readonly grid: Grid | null
   /** Where the recording plays from. */
   readonly audioUrl: string
 }
@@ -21,6 +24,7 @@ export interface VocalTraining {
 export interface NewVocalTraining {
   readonly title: string
   readonly notes: readonly PartNote[]
+  readonly grid: Grid | null
   readonly audio: Blob
 }
 
@@ -28,13 +32,20 @@ export interface NewVocalTraining {
 export const sharedStore = supabase !== null
 
 const BUCKET = 'vocal-recordings'
-const PART_VERSION = 1
+/** 2: notes may carry ornaments, slides, bends and syllables; the part may have a grid. */
+const PART_VERSION = 2
 
 export async function saveVocalTraining(training: NewVocalTraining): Promise<string> {
   const id = crypto.randomUUID()
   if (supabase === null) {
     await local('readwrite', (store) =>
-      store.put({ id, title: training.title, notes: training.notes, audio: training.audio }),
+      store.put({
+        id,
+        title: training.title,
+        notes: training.notes,
+        grid: training.grid,
+        audio: training.audio,
+      }),
     )
     return id
   }
@@ -46,7 +57,7 @@ export async function saveVocalTraining(training: NewVocalTraining): Promise<str
   const insert = await supabase.from('vocal_trainings').insert({
     id,
     title: training.title,
-    part: { version: PART_VERSION, notes: training.notes } as unknown as Json,
+    part: { version: PART_VERSION, notes: training.notes, grid: training.grid } as unknown as Json,
     audio_path: path,
   })
   if (insert.error) throw new Error(`Тренировка не сохранилась: ${insert.error.message}`)
@@ -57,7 +68,13 @@ export async function loadVocalTraining(id: string): Promise<VocalTraining | nul
   if (supabase === null) {
     const row = await local<StoredLocally | undefined>('readonly', (store) => store.get(id))
     if (!row) return null
-    return { id, title: row.title, notes: row.notes, audioUrl: URL.createObjectURL(row.audio) }
+    return {
+      id,
+      title: row.title,
+      notes: row.notes,
+      grid: row.grid ?? null,
+      audioUrl: URL.createObjectURL(row.audio),
+    }
   }
   const { data, error } = await supabase
     .from('vocal_trainings')
@@ -66,11 +83,12 @@ export async function loadVocalTraining(id: string): Promise<VocalTraining | nul
     .maybeSingle()
   if (error) throw new Error(`Тренировка не загрузилась: ${error.message}`)
   if (!data) return null
-  const part = data.part as unknown as { notes: PartNote[] }
+  const part = data.part as unknown as { notes: PartNote[]; grid?: Grid | null }
   return {
     id,
     title: data.title,
     notes: part.notes,
+    grid: part.grid ?? null,
     audioUrl: supabase.storage.from(BUCKET).getPublicUrl(data.audio_path).data.publicUrl,
   }
 }
@@ -79,6 +97,7 @@ interface StoredLocally {
   readonly id: string
   readonly title: string
   readonly notes: PartNote[]
+  readonly grid?: Grid | null
   readonly audio: Blob
 }
 

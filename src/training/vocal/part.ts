@@ -21,6 +21,8 @@ export interface PartNote {
   readonly vibrato?: Vibrato
   /** The voice from `slideIn ?? start` to `end`: [seconds from `start`, cents from `midi`]. */
   readonly bend?: readonly (readonly [number, number])[]
+  /** The syllable sung on it; ends with «-» when the word goes on. */
+  readonly lyric?: string
 }
 
 /** Pitch and loudness frames of a whole recording, for drawing it under its notes. */

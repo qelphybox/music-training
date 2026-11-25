@@ -14,4 +14,6 @@ export interface TakeNote {
   readonly midi: number
   readonly start: number
   readonly end: number
+  /** The syllable sung on it. */
+  readonly lyric?: string
 }

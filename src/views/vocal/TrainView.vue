@@ -2,10 +2,12 @@
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import type { TakeSource } from '@/components/pitch/inkTake'
 import InkScroll from '@/components/pitch/InkScroll.vue'
+import PartPlayer from '@/components/pitch/PartPlayer.vue'
 import { useExerciseSession } from '@/composables/useExerciseSession'
 import { useVocalPlayback, type PartSound } from '@/composables/useVocalPlayback'
 import { detectPitch, FRAME_PERIOD, VOICED } from '@/lib/swiftf0'
 import { loadVocalTraining, type VocalTraining } from '@/lib/vocalStore'
+import { estimateGrid } from '@/training/vocal/edit'
 import { noteName, spanOf, transcribeFrames, type Contour } from '@/training/vocal/part'
 import { LEVELS, review, type Level, type Review } from '@/training/vocal/review'
 import { contourSource, LiveTake } from './sources'
@@ -38,6 +40,8 @@ let headphonesConfirmed = false
 
 const notes = computed(() => training.value?.notes ?? [])
 const span = computed(() => spanOf(notes.value))
+// Parts saved before grids get one guessed from their notes: the count-in and the clicks need it.
+const grid = computed(() => training.value?.grid ?? estimateGrid(notes.value))
 
 onMounted(async () => {
   try {
@@ -50,6 +54,7 @@ onMounted(async () => {
     const response = await fetch(found.audioUrl)
     await player.load(await response.arrayBuffer())
     now.value = span.value.from
+    player.now.value = span.value.from
     stage.value = 'ready'
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : 'Тренировка не загрузилась'
@@ -82,23 +87,35 @@ const status = computed(() => {
   }
 })
 
-async function listen(): Promise<void> {
-  if (stage.value === 'listening') {
+function listen(): void {
+  if (player.playing.value) {
     player.stop()
     return
   }
   stage.value = 'listening'
   source.value = take
   take.clear()
-  await player.play(sound.value, notes.value, span.value.from, span.value.to, (at) => {
-    now.value = at
+  void player.play({
+    sound: sound.value,
+    notes: notes.value,
+    span: span.value,
+    grid: grid.value,
+    onTick: (at) => (now.value = at),
   })
+}
+
+// Playing ends by itself, by «стоп» or by the player's own controls: the page follows it.
+watch(player.playing, (playing) => {
+  if (playing) return
   if (stage.value === 'listening') {
-    now.value = span.value.from
     stage.value = result.value ? 'done' : 'ready'
     if (result.value) showResult(result.value)
+    else now.value = player.now.value
+  } else if (stage.value === 'singing' && along.value) {
+    // The last note's frames are still on their way from the analysis.
+    setTimeout(finish, 400)
   }
-}
+})
 
 async function sing(): Promise<void> {
   if (along.value && !headphonesConfirmed) {
@@ -118,11 +135,15 @@ async function sing(): Promise<void> {
   now.value = span.value.from
   stage.value = 'singing'
   if (along.value) {
-    await player.play(sound.value, notes.value, span.value.from, span.value.to, (at) => {
-      now.value = at
+    void player.play({
+      sound: sound.value,
+      notes: notes.value,
+      span: span.value,
+      grid: grid.value,
+      from: span.value.from,
+      once: true,
+      onTick: (at) => (now.value = at),
     })
-    // The last note's frames are still on their way from the analysis.
-    if (stage.value === 'singing') setTimeout(finish, 400)
   }
 }
 
@@ -280,6 +301,16 @@ const busy = computed(() => ['loading', 'missing', 'reviewing'].includes(stage.v
         </p>
       </section>
 
+      <PartPlayer
+        :player="player"
+        :notes="notes"
+        :span="span"
+        :grid="grid"
+        :disabled="busy || stage === 'singing' || stage === 'headphones'"
+        play-label="Послушать"
+        @toggle="listen"
+      />
+
       <div class="row">
         <span class="label">Слушать:</span>
         <div class="seg" role="group" aria-label="Что слушать">
@@ -312,14 +343,6 @@ const busy = computed(() => ['loading', 'missing', 'reviewing'].includes(stage.v
       </div>
 
       <div class="row">
-        <button
-          type="button"
-          class="action ghost big"
-          :disabled="busy || stage === 'singing' || stage === 'headphones'"
-          @click="listen"
-        >
-          {{ stage === 'listening' ? 'Стоп' : 'Послушать' }}
-        </button>
         <button v-if="stage === 'singing'" type="button" class="action big" @click="finish">
           Готово
         </button>

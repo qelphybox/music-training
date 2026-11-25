@@ -180,6 +180,15 @@ function draw(): void {
     c.fillStyle = palette.gold
     c.globalAlpha = onIt ? 0.6 : 0.28
     c.fillRect(x0, y(note.midi + BAND), x1 - x0, y(note.midi - BAND) - y(note.midi + BAND))
+    if (note.lyric && x(note.start) >= GUTTER - 2) {
+      // The syllable under its note, where the eye already is.
+      c.globalAlpha = 0.85
+      c.fillStyle = palette.muted
+      c.font = `${Math.max(12, Math.min(18, lane * 0.7))}px ${props.font}`
+      c.textAlign = 'left'
+      c.textBaseline = 'top'
+      c.fillText(note.lyric, x(note.start), y(note.midi - BAND) + 3)
+    }
   }
   c.globalAlpha = 1
 

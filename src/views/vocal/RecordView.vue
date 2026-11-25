@@ -1,14 +1,29 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import PartPlayer from '@/components/pitch/PartPlayer.vue'
 import PartSheet from '@/components/pitch/PartSheet.vue'
 import { useVocalPlayback, type PartSound } from '@/composables/useVocalPlayback'
 import { detectPitch, FRAME_PERIOD, VOICED, type PitchFrames } from '@/lib/swiftf0'
 import { saveVocalTraining, sharedStore } from '@/lib/vocalStore'
+import {
+  assignLyrics,
+  estimateGrid,
+  join,
+  lyricsOf,
+  noteAt,
+  quantize,
+  remove,
+  setLyric,
+  setOrnament,
+  split,
+  type Grid,
+} from '@/training/vocal/edit'
 import { MELISMA_DEFAULTS, type Scale } from '@/training/vocal/melisma'
 import { detectOnsets } from '@/training/vocal/onsets'
 import {
   monoOf,
+  noteName,
   spanOf,
   transcribe,
   transcribeFrames,
@@ -34,11 +49,111 @@ const elapsed = ref(0)
 const meter = ref(0)
 const link = ref('')
 const copied = ref(false)
-const listening = ref<PartSound | null>(null)
+const sound = ref<PartSound>('recording')
 const router = useRouter()
 const player = useVocalPlayback()
 
 const span = computed(() => spanOf(notes.value))
+
+// ─── Editing ──────────────────────────────────────────────────────────────────────────────────
+// Every edit replaces the notes; the arrays before it are the undo history. Once the part is
+// edited by hand, the recognition knobs are locked: turning one would read the notes anew.
+const grid = shallowRef<Grid | null>(null)
+const selected = ref<number | null>(null)
+const past = shallowRef<PartNote[][]>([])
+const future = shallowRef<PartNote[][]>([])
+const edited = computed(() => past.value.length > 0)
+/** Edits snap to lines this many beats apart (1 a quarter, 0.5 an eighth…); null — free. */
+const snapTo = ref<number | null>(null)
+const lyrics = ref('')
+const lyricsLeft = ref(0)
+
+function applyEdit(next: PartNote[], pick: number | null = selected.value): void {
+  past.value = [...past.value, notes.value]
+  future.value = []
+  notes.value = next
+  selected.value = pick !== null && next[pick] ? pick : null
+}
+function undo(): void {
+  const previous = past.value[past.value.length - 1]
+  if (!previous) return
+  future.value = [notes.value, ...future.value]
+  past.value = past.value.slice(0, -1)
+  notes.value = previous
+  if (selected.value !== null && !previous[selected.value]) selected.value = null
+}
+function redo(): void {
+  const next = future.value[0]
+  if (!next) return
+  past.value = [...past.value, notes.value]
+  future.value = future.value.slice(1)
+  notes.value = next
+  if (selected.value !== null && !next[selected.value]) selected.value = null
+}
+const picked = computed(() =>
+  selected.value === null ? null : (notes.value[selected.value] ?? null),
+)
+function cutPicked(): void {
+  const i = selected.value
+  const note = picked.value
+  if (i === null || !note) return
+  // At the cursor when it is inside the note, else in the middle.
+  const at =
+    noteAt(notes.value, player.now.value) === i ? player.now.value : (note.start + note.end) / 2
+  applyEdit(split(notes.value, i, at))
+}
+function joinPicked(): void {
+  if (selected.value !== null) applyEdit(join(notes.value, selected.value))
+}
+function removePicked(): void {
+  const i = selected.value
+  if (i === null) return
+  applyEdit(remove(notes.value, i), Math.min(i, notes.value.length - 2))
+}
+function toggleOrnament(): void {
+  const i = selected.value
+  if (i !== null && picked.value) applyEdit(setOrnament(notes.value, i, !picked.value.ornament))
+}
+function setPickedLyric(event: Event): void {
+  const i = selected.value
+  if (i !== null) applyEdit(setLyric(notes.value, i, (event.target as HTMLInputElement).value))
+}
+function layLyrics(): void {
+  const result = assignLyrics(notes.value, lyrics.value)
+  lyricsLeft.value = result.left
+  applyEdit(result.notes)
+}
+
+// The grid: guessed from the notes, set by hand, and the notes pulled onto it.
+const bpmText = computed({
+  get: () => (grid.value ? String(Math.round(grid.value.bpm * 10) / 10) : ''),
+  set: (text: string) => {
+    const bpm = Number(text.replace(',', '.'))
+    if (grid.value && bpm >= 30 && bpm <= 300) grid.value = { ...grid.value, bpm }
+  },
+})
+function scaleTempo(factor: number): void {
+  if (grid.value)
+    grid.value = { ...grid.value, bpm: Math.min(300, Math.max(30, grid.value.bpm * factor)) }
+}
+function guessGrid(): void {
+  grid.value = estimateGrid(notes.value, grid.value?.beatsPerBar ?? 4)
+}
+function setMeter(beatsPerBar: number): void {
+  if (grid.value) grid.value = { ...grid.value, beatsPerBar }
+}
+function downbeatHere(): void {
+  if (grid.value) grid.value = { ...grid.value, offset: Math.round(player.now.value * 1000) / 1000 }
+}
+function quantizeAll(): void {
+  if (grid.value) applyEdit(quantize(notes.value, grid.value, snapTo.value ?? 0.5), null)
+}
+
+function togglePlay(): void {
+  if (player.playing.value) player.stop()
+  else
+    void player.play({ sound: sound.value, notes: notes.value, span: span.value, grid: grid.value })
+}
 const status = computed(() => {
   if (error.value) return error.value
   switch (stage.value) {
@@ -180,6 +295,12 @@ async function read(): Promise<void> {
     notes.value = result.notes
     contour.value = result.contour
     scale.value = result.scale ?? null
+    past.value = []
+    future.value = []
+    selected.value = null
+    grid.value = estimateGrid(result.notes)
+    lyrics.value = ''
+    player.now.value = spanOf(result.notes).from
     stage.value = 'ready'
     if (result.notes.length === 0)
       error.value = 'Нот не нашлось — спой громче или ближе к микрофону'
@@ -205,6 +326,11 @@ watch([ornamentMs, slide, vibrato, sensitivity], () => {
   clearTimeout(knobTimer)
   knobTimer = window.setTimeout(() => void read(), 150)
 })
+/** Back to what the recognition gave, edits gone. */
+function dropEdits(): void {
+  if (!confirm('Ручные правки, сетка и слова пропадут. Распознать заново?')) return
+  void read()
+}
 function resetKnobs(): void {
   ornamentMs.value = MELISMA_DEFAULTS.ornament * 1000
   slide.value = MELISMA_DEFAULTS.slide
@@ -220,16 +346,6 @@ function pickFile(event: Event): void {
   if (file) void accept(file)
 }
 
-async function listen(sound: PartSound): Promise<void> {
-  if (listening.value === sound) {
-    player.stop()
-    return
-  }
-  listening.value = sound
-  await player.play(sound, notes.value, span.value.from, span.value.to)
-  if (listening.value === sound) listening.value = null
-}
-
 async function save(): Promise<void> {
   if (!recording.value) return
   player.stop()
@@ -239,6 +355,7 @@ async function save(): Promise<void> {
     const id = await saveVocalTraining({
       title: title.value.trim(),
       notes: notes.value,
+      grid: grid.value,
       audio: recording.value,
     })
     const href = router.resolve({ name: 'vocal-train', params: { id } }).href
@@ -261,6 +378,10 @@ function again(): void {
   notes.value = []
   contour.value = null
   scale.value = null
+  grid.value = null
+  past.value = []
+  future.value = []
+  selected.value = null
   onsets = null
   recording.value = null
   samples = null
@@ -312,32 +433,200 @@ onBeforeUnmount(() => {
     <template v-else-if="stage !== 'reading' && contour">
       <div class="sheet">
         <PartSheet
+          v-model:selected="selected"
           :notes="notes"
           :contour="contour"
           :scale="scale"
+          :grid="grid"
           :span="span"
-          :now="listening ? player.now.value : null"
+          :now="player.now.value"
+          :loop="player.settings.looping ? player.settings.loop : null"
+          :snap-to="snapTo"
+          editable
           label="Партия"
+          @edit="applyEdit"
+          @seek="player.seek"
+          @undo="undo"
+          @redo="redo"
         />
       </div>
+
+      <PartPlayer
+        :player="player"
+        :notes="notes"
+        :span="span"
+        :grid="grid"
+        :disabled="!notes.length"
+        @toggle="togglePlay"
+      />
       <div class="row">
-        <span class="label">Послушать:</span>
-        <button type="button" class="action ghost" @click="listen('recording')">
-          {{ listening === 'recording' ? 'Стоп' : 'Запись' }}
-        </button>
-        <button
-          type="button"
-          class="action ghost"
-          :disabled="!notes.length"
-          @click="listen('notes')"
-        >
-          {{ listening === 'notes' ? 'Стоп' : 'Ноты' }}
-        </button>
+        <span class="label">Играть:</span>
+        <div class="seg" role="group" aria-label="Что играть">
+          <button type="button" :aria-pressed="sound === 'recording'" @click="sound = 'recording'">
+            Запись
+          </button>
+          <button type="button" :aria-pressed="sound === 'notes'" @click="sound = 'notes'">
+            Ноты
+          </button>
+        </div>
         <button type="button" class="action ghost" @click="again">Перезаписать</button>
       </div>
+
+      <section class="panel" aria-label="Правка нот">
+        <div class="row">
+          <span class="label">Правка:</span>
+          <button type="button" class="tool" :disabled="!past.length" @click="undo">
+            ↶ Отменить
+          </button>
+          <button type="button" class="tool" :disabled="!future.length" @click="redo">
+            ↷ Вернуть
+          </button>
+          <button type="button" class="tool" :disabled="!picked" @click="cutPicked">
+            ✂ Разрезать
+          </button>
+          <button
+            type="button"
+            class="tool"
+            :disabled="!picked || selected === notes.length - 1"
+            @click="joinPicked"
+          >
+            →|← Склеить
+          </button>
+          <button type="button" class="tool" :disabled="!picked" @click="removePicked">
+            Удалить
+          </button>
+          <button
+            type="button"
+            class="tool"
+            :aria-pressed="!!picked?.ornament"
+            :disabled="!picked"
+            @click="toggleOrnament"
+          >
+            Украшение
+          </button>
+        </div>
+        <div v-if="picked" class="row">
+          <span class="label picked">
+            {{ noteName(picked.midi) }} · {{ picked.start.toFixed(2) }}–{{
+              picked.end.toFixed(2)
+            }}
+            с
+          </span>
+          <label class="label">
+            Слог
+            <input
+              :key="selected ?? -1"
+              class="field small"
+              :value="picked.lyric ?? ''"
+              maxlength="20"
+              placeholder="ла"
+              @change="setPickedLyric"
+            />
+          </label>
+        </div>
+        <p class="hint">
+          Нажми на ноту и тяни: вверх-вниз — по полутонам, вбок — по времени, за край — длина.
+          Двойной клик по пустому месту — новая нота. Клавиши: ↑↓ полутон (⇧ — октава), ←→ сдвиг, S
+          — разрезать под курсором мыши, J — склеить со следующей, O — украшение, Delete, ⌘Z / ⇧⌘Z.
+        </p>
+      </section>
+
+      <section class="panel" aria-label="Сетка">
+        <div class="row">
+          <span class="label">Сетка:</span>
+          <label class="label">
+            BPM
+            <input
+              v-model.lazy="bpmText"
+              class="field small"
+              inputmode="decimal"
+              :disabled="!grid"
+            />
+          </label>
+          <button type="button" class="tool" :disabled="!grid" @click="scaleTempo(0.5)">÷2</button>
+          <button type="button" class="tool" :disabled="!grid" @click="scaleTempo(2)">×2</button>
+          <button type="button" class="tool" :disabled="!notes.length" @click="guessGrid">
+            Угадать
+          </button>
+          <div class="seg" role="group" aria-label="Размер">
+            <button
+              v-for="beats in [2, 3, 4, 6]"
+              :key="beats"
+              type="button"
+              :aria-pressed="grid?.beatsPerBar === beats"
+              :disabled="!grid"
+              @click="setMeter(beats)"
+            >
+              {{ beats }}/4
+            </button>
+          </div>
+          <button type="button" class="tool" :disabled="!grid" @click="downbeatHere">
+            Сильная доля — по курсору
+          </button>
+        </div>
+        <div class="row">
+          <span class="label">Привязка:</span>
+          <div class="seg" role="group" aria-label="Привязка к сетке">
+            <button
+              v-for="option in [
+                { value: null, name: 'Выкл' },
+                { value: 1, name: '1/4' },
+                { value: 0.5, name: '1/8' },
+                { value: 0.25, name: '1/16' },
+              ]"
+              :key="option.name"
+              type="button"
+              :aria-pressed="snapTo === option.value"
+              @click="snapTo = option.value"
+            >
+              {{ option.name }}
+            </button>
+          </div>
+          <button
+            type="button"
+            class="action ghost"
+            :disabled="!grid || !notes.length"
+            @click="quantizeAll"
+          >
+            Подогнать к сетке ({{ snapTo === 1 ? '1/4' : snapTo === 0.25 ? '1/16' : '1/8' }})
+          </button>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Слова">
+        <div class="row lyrics">
+          <span class="label">Слова:</span>
+          <textarea
+            v-model="lyrics"
+            class="field"
+            rows="2"
+            placeholder="ма-ма мы-ла ра-му — дефис делит слова на слоги, «_» тянет слог на следующую ноту"
+          />
+          <button
+            type="button"
+            class="action ghost"
+            :disabled="!notes.length || !lyrics.trim()"
+            @click="layLyrics"
+          >
+            Разложить по нотам
+          </button>
+          <button
+            v-if="notes.some((n) => n.lyric) && !lyrics"
+            type="button"
+            class="tool"
+            @click="lyrics = lyricsOf(notes)"
+          >
+            Взять с нот
+          </button>
+        </div>
+        <p v-if="lyricsLeft" class="hint warn">
+          Слогов больше, чем нот: {{ lyricsLeft }} не досталось ноты.
+        </p>
+      </section>
+
       <div class="row">
         <span class="label">Распознавание:</span>
-        <div class="seg" role="group" aria-label="Распознавание">
+        <div class="seg" role="group" aria-label="Распознавание" :class="{ frozen: edited }">
           <button type="button" :aria-pressed="tracker === 'melisma'" @click="tracker = 'melisma'">
             Как MELISMA
           </button>
@@ -353,7 +642,13 @@ onBeforeUnmount(() => {
           Быстрые ноты (мелизмы; вибрато может дробиться)
         </label>
       </div>
-      <div v-if="tracker === 'melisma'" class="knobs">
+      <p v-if="edited" class="notice">
+        Партия поправлена вручную, поэтому распознавание заморожено: ручки сбросили бы правки.
+        <button type="button" class="action ghost small" @click="dropEdits">
+          Распознать заново
+        </button>
+      </p>
+      <div v-if="tracker === 'melisma'" class="knobs" :class="{ frozen: edited }">
         <label class="knob">
           <span
             >Украшение <b>{{ ornamentMs }} мс</b></span
@@ -426,6 +721,61 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.panel {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid rgb(28 27 25 / 15%);
+  border-radius: 8px;
+}
+.tool {
+  min-height: 2.25rem;
+  padding: 0 0.7rem;
+  border: 1px solid rgb(28 27 25 / 35%);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.tool[aria-pressed='true'] {
+  background: var(--ink);
+  color: #f2efe9;
+}
+.tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.field.small {
+  flex: none;
+  min-width: 0;
+  width: 5.5rem;
+  min-height: 2.25rem;
+  margin-left: 0.3rem;
+}
+.picked {
+  color: var(--ink);
+  font-weight: 600;
+}
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.hint.warn {
+  color: var(--seal);
+}
+.lyrics textarea {
+  min-height: 3rem;
+  padding: 0.5rem 0.7rem;
+  resize: vertical;
+}
+.frozen {
+  opacity: 0.45;
+  pointer-events: none;
+}
 .knobs {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
