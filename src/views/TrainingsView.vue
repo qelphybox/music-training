@@ -2,6 +2,7 @@
 import {
   PhArrowUpRight,
   PhGuitar,
+  PhMicrophoneStage,
   PhPencilSimpleLine,
   PhSmiley,
   PhWaveform,
@@ -19,6 +20,22 @@ import {
     </section>
 
     <ul class="list">
+      <li>
+        <RouterLink to="/vocal/new" class="card">
+          <span class="card__mark" aria-hidden="true">
+            <PhMicrophoneStage :size="20" weight="light" />
+          </span>
+          <span class="card__body">
+            <span class="card__title">Вокальный тренажёр</span>
+            <span class="card__text">
+              Спой партию — она станет нотами и ссылкой. Ученик слушает, поёт и видит, где попал.
+            </span>
+          </span>
+          <span class="card__icon" aria-hidden="true">
+            <PhArrowUpRight :size="16" weight="light" />
+          </span>
+        </RouterLink>
+      </li>
       <li>
         <RouterLink to="/tetrachord-training/issue" class="card">
           <span class="card__mark" aria-hidden="true">

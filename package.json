@@ -22,6 +22,7 @@
     "@mediapipe/tasks-vision": "^1.0.1",
     "@phosphor-icons/vue": "^2.2.1",
     "@supabase/supabase-js": "^2.116.0",
+    "onnxruntime-web": "1.29.0",
     "vue": "^3.5.40",
     "vue-router": "^5.2.0"
   },

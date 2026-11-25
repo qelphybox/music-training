@@ -156,6 +156,20 @@ const router = createRouter({
       meta: { title: 'Тушь', public: true },
     },
     {
+      // The vocal trainer needs no account: the teacher records, the student opens a link.
+      path: '/vocal/new',
+      name: 'vocal-record',
+      component: () => import('@/views/vocal/RecordView.vue'),
+      meta: { title: 'Запись партии', public: true },
+    },
+    {
+      path: '/vocal/:id',
+      name: 'vocal-train',
+      component: () => import('@/views/vocal/TrainView.vue'),
+      props: true,
+      meta: { title: 'Вокальная тренировка', public: true },
+    },
+    {
       path: '/:pathMatch(.*)*',
       name: 'not-found',
       component: () => import('@/views/NotFoundView.vue'),

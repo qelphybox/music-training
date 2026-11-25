@@ -326,13 +326,17 @@ export function useExerciseSession(options: ExerciseSessionOptions = {}) {
   async function samplesBetween(
     fromSeconds: number,
     toSeconds: number,
-  ): Promise<{ samples: Float32Array; start: number } | null> {
+  ): Promise<{ samples: Float32Array; start: number; sampleRate: number } | null> {
     const worker = host
     if (worker === null || options.record !== true) return null
     const rate = worker.context.sampleRate
     const startSample = Math.max(0, Math.round(fromSeconds * rate))
     const count = Math.max(0, Math.round(toSeconds * rate) - startSample)
-    return { samples: await worker.readPcm(startSample, count), start: startSample / rate }
+    return {
+      samples: await worker.readPcm(startSample, count),
+      start: startSample / rate,
+      sampleRate: rate,
+    }
   }
 
   function tick(now: number): void {

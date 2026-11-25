@@ -62,6 +62,30 @@ export type Database = {
         }
         Relationships: []
       }
+      vocal_trainings: {
+        Row: {
+          audio_path: string
+          created_at: string
+          id: string
+          part: Json
+          title: string
+        }
+        Insert: {
+          audio_path: string
+          created_at?: string
+          id?: string
+          part: Json
+          title?: string
+        }
+        Update: {
+          audio_path?: string
+          created_at?: string
+          id?: string
+          part?: Json
+          title?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
