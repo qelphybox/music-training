@@ -1,24 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import PartPlayer from '@/components/pitch/PartPlayer.vue'
 import PartSheet from '@/components/pitch/PartSheet.vue'
+import PartToolbar from '@/components/pitch/PartToolbar.vue'
+import { usePartEditor } from '@/composables/usePartEditor'
 import { useVocalPlayback, type PartSound } from '@/composables/useVocalPlayback'
 import { detectPitch, FRAME_PERIOD, VOICED, type PitchFrames } from '@/lib/swiftf0'
 import { saveVocalTraining, sharedStore } from '@/lib/vocalStore'
-import {
-  assignLyrics,
-  estimateGrid,
-  join,
-  lyricsOf,
-  noteAt,
-  quantize,
-  remove,
-  setLyric,
-  setOrnament,
-  split,
-  type Grid,
-} from '@/training/vocal/edit'
+import { assignLyrics, estimateGrid, lyricsOf, quantize, setLyric } from '@/training/vocal/edit'
 import { MELISMA_DEFAULTS, type Scale } from '@/training/vocal/melisma'
 import { detectOnsets } from '@/training/vocal/onsets'
 import {
@@ -29,7 +19,6 @@ import {
   transcribeFrames,
   transcribeMelisma,
   type Contour,
-  type PartNote,
   type Tracker,
 } from '@/training/vocal/part'
 import './vocal.css'
@@ -41,7 +30,6 @@ type Stage = 'idle' | 'recording' | 'reading' | 'ready' | 'saving' | 'saved'
 const stage = ref<Stage>('idle')
 const error = ref<string | null>(null)
 const title = ref('')
-const notes = shallowRef<PartNote[]>([])
 const contour = shallowRef<Contour | null>(null)
 const scale = shallowRef<Scale | null>(null)
 const recording = shallowRef<Blob | null>(null)
@@ -53,75 +41,43 @@ const sound = ref<PartSound>('recording')
 const router = useRouter()
 const player = useVocalPlayback()
 
-const span = computed(() => spanOf(notes.value))
-
 // ─── Editing ──────────────────────────────────────────────────────────────────────────────────
-// Every edit replaces the notes; the arrays before it are the undo history. Once the part is
-// edited by hand, the recognition knobs are locked: turning one would read the notes anew.
-const grid = shallowRef<Grid | null>(null)
-const selected = ref<number | null>(null)
-const past = shallowRef<PartNote[][]>([])
-const future = shallowRef<PartNote[][]>([])
-const edited = computed(() => past.value.length > 0)
-/** Edits snap to lines this many beats apart (1 a quarter, 0.5 an eighth…); null — free. */
-const snapTo = ref<number | null>(null)
+// The editor (`usePartEditor`) holds the notes, the pick, the mode and the history; the sheet and
+// the toolbar drive its commands. Once the part is edited by hand, the recognition knobs are
+// locked: turning one would read the notes anew.
+const editor = usePartEditor({
+  cursor: () => player.now.value,
+  togglePlay,
+  setLoop: (range) => {
+    player.settings.loop = range
+    player.settings.looping = range !== null
+  },
+  toggleLoop: () => {
+    if (player.settings.loop) player.settings.looping = !player.settings.looping
+  },
+  loopOn: () => player.settings.looping && player.settings.loop !== null,
+})
+const notes = editor.notes
+const grid = editor.grid
+const snapTo = editor.snapTo
+const edited = editor.edited
+const span = computed(() => spanOf(notes.value))
 const lyrics = ref('')
 const lyricsLeft = ref(0)
 
-function applyEdit(next: PartNote[], pick: number | null = selected.value): void {
-  past.value = [...past.value, notes.value]
-  future.value = []
-  notes.value = next
-  selected.value = pick !== null && next[pick] ? pick : null
-}
-function undo(): void {
-  const previous = past.value[past.value.length - 1]
-  if (!previous) return
-  future.value = [notes.value, ...future.value]
-  past.value = past.value.slice(0, -1)
-  notes.value = previous
-  if (selected.value !== null && !previous[selected.value]) selected.value = null
-}
-function redo(): void {
-  const next = future.value[0]
-  if (!next) return
-  past.value = [...past.value, notes.value]
-  future.value = future.value.slice(1)
-  notes.value = next
-  if (selected.value !== null && !next[selected.value]) selected.value = null
-}
-const picked = computed(() =>
-  selected.value === null ? null : (notes.value[selected.value] ?? null),
+/** The one picked note, for its syllable. */
+const single = computed(() =>
+  editor.selection.value.length === 1 ? (notes.value[editor.selection.value[0]!] ?? null) : null,
 )
-function cutPicked(): void {
-  const i = selected.value
-  const note = picked.value
-  if (i === null || !note) return
-  // At the cursor when it is inside the note, else in the middle.
-  const at =
-    noteAt(notes.value, player.now.value) === i ? player.now.value : (note.start + note.end) / 2
-  applyEdit(split(notes.value, i, at))
-}
-function joinPicked(): void {
-  if (selected.value !== null) applyEdit(join(notes.value, selected.value))
-}
-function removePicked(): void {
-  const i = selected.value
-  if (i === null) return
-  applyEdit(remove(notes.value, i), Math.min(i, notes.value.length - 2))
-}
-function toggleOrnament(): void {
-  const i = selected.value
-  if (i !== null && picked.value) applyEdit(setOrnament(notes.value, i, !picked.value.ornament))
-}
-function setPickedLyric(event: Event): void {
-  const i = selected.value
-  if (i !== null) applyEdit(setLyric(notes.value, i, (event.target as HTMLInputElement).value))
+function setSingleLyric(event: Event): void {
+  const i = editor.selection.value[0]
+  if (single.value && i !== undefined)
+    editor.apply(setLyric(notes.value, i, (event.target as HTMLInputElement).value), 'Слог')
 }
 function layLyrics(): void {
   const result = assignLyrics(notes.value, lyrics.value)
   lyricsLeft.value = result.left
-  applyEdit(result.notes)
+  editor.apply(result.notes, 'Слова')
 }
 
 // The grid: guessed from the notes, set by hand, and the notes pulled onto it.
@@ -146,7 +102,8 @@ function downbeatHere(): void {
   if (grid.value) grid.value = { ...grid.value, offset: Math.round(player.now.value * 1000) / 1000 }
 }
 function quantizeAll(): void {
-  if (grid.value) applyEdit(quantize(notes.value, grid.value, snapTo.value ?? 0.5), null)
+  if (grid.value)
+    editor.apply(quantize(notes.value, grid.value, snapTo.value ?? 0.5), 'Подогнать к сетке', [])
 }
 
 function togglePlay(): void {
@@ -154,6 +111,19 @@ function togglePlay(): void {
   else
     void player.play({ sound: sound.value, notes: notes.value, span: span.value, grid: grid.value })
 }
+
+// Keys while the part is on the page (not while typing in a field: the editor checks).
+const editing = computed(() => stage.value === 'ready' || stage.value === 'saved')
+const keyDown = (event: KeyboardEvent) => editing.value && editor.onKeyDown(event)
+const keyUp = (event: KeyboardEvent) => editor.onKeyUp(event)
+onMounted(() => {
+  window.addEventListener('keydown', keyDown)
+  window.addEventListener('keyup', keyUp)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', keyDown)
+  window.removeEventListener('keyup', keyUp)
+})
 const status = computed(() => {
   if (error.value) return error.value
   switch (stage.value) {
@@ -292,13 +262,9 @@ async function read(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 50))
       result = transcribe(samples, sampleRate)
     }
-    notes.value = result.notes
+    editor.reset(result.notes, estimateGrid(result.notes))
     contour.value = result.contour
     scale.value = result.scale ?? null
-    past.value = []
-    future.value = []
-    selected.value = null
-    grid.value = estimateGrid(result.notes)
     lyrics.value = ''
     player.now.value = spanOf(result.notes).from
     stage.value = 'ready'
@@ -375,13 +341,9 @@ async function copy(): Promise<void> {
 
 function again(): void {
   player.stop()
-  notes.value = []
+  editor.reset([], null)
   contour.value = null
   scale.value = null
-  grid.value = null
-  past.value = []
-  future.value = []
-  selected.value = null
   onsets = null
   recording.value = null
   samples = null
@@ -431,24 +393,53 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else-if="stage !== 'reading' && contour">
-      <div class="sheet">
+      <PartToolbar :editor="editor" />
+      <div class="sheet editor-sheet">
         <PartSheet
-          v-model:selected="selected"
           :notes="notes"
           :contour="contour"
           :scale="scale"
           :grid="grid"
           :span="span"
           :now="player.now.value"
-          :loop="player.settings.looping ? player.settings.loop : null"
+          :loop="player.settings.loop"
+          :looping="player.settings.looping"
           :snap-to="snapTo"
+          :mode="editor.activeMode.value"
+          :ripple="editor.ripple.value"
+          :selection="editor.selection.value"
+          :fit-request="editor.fitRequest.value"
+          :zoom-request="editor.zoomRequest.value"
           editable
           label="Партия"
-          @edit="applyEdit"
+          @edit="(next, label, pick) => editor.apply(next, label, pick)"
+          @select="editor.select"
           @seek="player.seek"
-          @undo="undo"
-          @redo="redo"
+          @loop="
+            (range) => {
+              player.settings.loop = range
+              player.settings.looping = range !== null
+            }
+          "
+          @toggle-loop="player.settings.looping = !player.settings.looping"
+          @audition="player.previewNote"
         />
+      </div>
+      <div v-if="single" class="row">
+        <span class="label picked">
+          {{ noteName(single.midi) }} · {{ single.start.toFixed(2) }}–{{ single.end.toFixed(2) }} с
+        </span>
+        <label class="label">
+          Слог
+          <input
+            :key="editor.selection.value[0]"
+            class="field small"
+            :value="single.lyric ?? ''"
+            maxlength="20"
+            placeholder="ла"
+            @change="setSingleLyric"
+          />
+        </label>
       </div>
 
       <PartPlayer
@@ -471,65 +462,6 @@ onBeforeUnmount(() => {
         </div>
         <button type="button" class="action ghost" @click="again">Перезаписать</button>
       </div>
-
-      <section class="panel" aria-label="Правка нот">
-        <div class="row">
-          <span class="label">Правка:</span>
-          <button type="button" class="tool" :disabled="!past.length" @click="undo">
-            ↶ Отменить
-          </button>
-          <button type="button" class="tool" :disabled="!future.length" @click="redo">
-            ↷ Вернуть
-          </button>
-          <button type="button" class="tool" :disabled="!picked" @click="cutPicked">
-            ✂ Разрезать
-          </button>
-          <button
-            type="button"
-            class="tool"
-            :disabled="!picked || selected === notes.length - 1"
-            @click="joinPicked"
-          >
-            →|← Склеить
-          </button>
-          <button type="button" class="tool" :disabled="!picked" @click="removePicked">
-            Удалить
-          </button>
-          <button
-            type="button"
-            class="tool"
-            :aria-pressed="!!picked?.ornament"
-            :disabled="!picked"
-            @click="toggleOrnament"
-          >
-            Украшение
-          </button>
-        </div>
-        <div v-if="picked" class="row">
-          <span class="label picked">
-            {{ noteName(picked.midi) }} · {{ picked.start.toFixed(2) }}–{{
-              picked.end.toFixed(2)
-            }}
-            с
-          </span>
-          <label class="label">
-            Слог
-            <input
-              :key="selected ?? -1"
-              class="field small"
-              :value="picked.lyric ?? ''"
-              maxlength="20"
-              placeholder="ла"
-              @change="setPickedLyric"
-            />
-          </label>
-        </div>
-        <p class="hint">
-          Нажми на ноту и тяни: вверх-вниз — по полутонам, вбок — по времени, за край — длина.
-          Двойной клик по пустому месту — новая нота. Клавиши: ↑↓ полутон (⇧ — октава), ←→ сдвиг, S
-          — разрезать под курсором мыши, J — склеить со следующей, O — украшение, Delete, ⌘Z / ⇧⌘Z.
-        </p>
-      </section>
 
       <section class="panel" aria-label="Сетка">
         <div class="row">
@@ -721,6 +653,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.editor-sheet {
+  height: min(62dvh, 600px);
+  min-height: 320px;
+}
 .panel {
   display: grid;
   gap: 0.5rem;

@@ -235,6 +235,23 @@ export function useVocalPlayback() {
     preparing.value = false
   }
 
+  /** A short tone of `midi`, for the keyboard down the sheet. */
+  function previewNote(midi: number): void {
+    const ctx = audio()
+    void ctx.resume()
+    const at = ctx.currentTime + 0.01
+    const osc = ctx.createOscillator()
+    const env = ctx.createGain()
+    osc.type = 'triangle'
+    osc.frequency.value = 440 * 2 ** ((midi - 69) / 12)
+    env.gain.setValueAtTime(0, at)
+    env.gain.linearRampToValueAtTime(0.35, at + 0.015)
+    env.gain.exponentialRampToValueAtTime(0.001, at + 0.6)
+    osc.connect(env).connect(gain!)
+    osc.start(at)
+    osc.stop(at + 0.62)
+  }
+
   /** Moves the cursor; playing, it goes on from there. */
   function seek(seconds: number): void {
     now.value = seconds
@@ -254,7 +271,7 @@ export function useVocalPlayback() {
     void context?.close()
   })
 
-  return { playing, preparing, now, settings, load, play, stop, seek }
+  return { playing, preparing, now, settings, load, play, stop, seek, previewNote }
 }
 
 /** One metronome click at `when`: higher on the downbeat. */

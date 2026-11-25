@@ -7,6 +7,8 @@
   --hit: #3d7a3a;
   --near: #b07d12;
   display: grid;
+  /* One column no wider than the screen, whatever a row inside would like. */
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   min-height: 100dvh;
   width: 100%;

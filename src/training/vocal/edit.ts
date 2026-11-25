@@ -163,6 +163,109 @@ export function noteAt(notes: readonly Note[], time: number): number {
   return notes.findIndex((n) => time >= n.start && time < n.end)
 }
 
+// ─── Groups and boundaries ────────────────────────────────────────────────────────────────────
+
+/** Notes closer than this are touching: they share a boundary, seconds. */
+const TOUCHING = 0.002
+
+/** Moves the notes `picked` up or down by `semitones` together. */
+export function transposeMany(
+  notes: readonly Note[],
+  picked: readonly number[],
+  semitones: number,
+): Note[] {
+  return picked.reduce<Note[]>((out, i) => transpose(out, i, semitones), [...notes])
+}
+
+/**
+ * Shifts the notes `picked` in time by `dt` together, as far as the notes not picked let them:
+ * a run of picked neighbours moves as one block.
+ */
+export function moveMany(notes: readonly Note[], picked: readonly number[], dt: number): Note[] {
+  const set = new Set(picked)
+  let lo = -Infinity
+  let hi = Infinity
+  for (const i of set) {
+    const note = notes[i]
+    if (!note) continue
+    if (!set.has(i - 1)) lo = Math.max(lo, (notes[i - 1]?.end ?? 0) - (note.slideIn ?? note.start))
+    if (!set.has(i + 1)) hi = Math.min(hi, (notes[i + 1]?.start ?? Infinity) - note.end)
+  }
+  const d = Math.min(hi, Math.max(lo, dt))
+  if (!Number.isFinite(d) || d === 0) return [...notes]
+  return notes.map((n, i) =>
+    set.has(i)
+      ? {
+          ...n,
+          start: round(n.start + d),
+          end: round(n.end + d),
+          ...(n.slideIn !== undefined ? { slideIn: round(n.slideIn + d) } : {}),
+        }
+      : n,
+  )
+}
+
+export function removeMany(notes: readonly Note[], picked: readonly number[]): Note[] {
+  const set = new Set(picked)
+  return notes.filter((_, i) => !set.has(i))
+}
+
+/** Joins the notes from `first` to `last` into one (as `join` does, pair by pair). */
+export function joinRange(notes: readonly Note[], first: number, last: number): Note[] {
+  let out = [...notes]
+  for (let k = first; k < last; k++) out = join(out, first)
+  return out
+}
+
+/** Whether notes `i` and `i + 1` touch: one boundary between them. */
+export function touching(notes: readonly Note[], i: number): boolean {
+  const a = notes[i]
+  const b = notes[i + 1]
+  return !!a && !!b && Math.abs(b.start - a.end) < TOUCHING
+}
+
+/**
+ * Moves the end of note `i` to `time`. When the next note touches it, their shared boundary moves:
+ * `ripple` false — both notes stretch (the next starts where this one ends); `ripple` true — only
+ * this note stretches and everything after it moves by as much. A free end just stretches.
+ */
+export function moveBoundary(
+  notes: readonly Note[],
+  i: number,
+  time: number,
+  ripple = false,
+): Note[] {
+  const note = notes[i]
+  if (!note) return [...notes]
+  if (ripple) {
+    const end = Math.max(note.start + SHORTEST, time)
+    const d = end - note.end
+    return notes.map((n, k) => {
+      if (k < i) return n
+      if (k === i) return { ...n, end: round(end) }
+      return {
+        ...n,
+        start: round(n.start + d),
+        end: round(n.end + d),
+        ...(n.slideIn !== undefined ? { slideIn: round(n.slideIn + d) } : {}),
+      }
+    })
+  }
+  if (!touching(notes, i)) return resize(notes, i, 'end', time)
+  const next = notes[i + 1]!
+  const at = Math.min(next.end - SHORTEST, Math.max(note.start + SHORTEST, time))
+  const shift = next.start - at
+  return notes.map((n, k) => {
+    if (k === i) return { ...n, end: round(at) }
+    if (k !== i + 1) return n
+    return {
+      ...n,
+      start: round(at),
+      ...(n.bend ? { bend: n.bend.map(([t, c]) => [round(t + shift), c] as const) } : {}),
+    }
+  })
+}
+
 // ─── Words ────────────────────────────────────────────────────────────────────────────────────
 
 /**

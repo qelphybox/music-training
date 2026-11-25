@@ -4,13 +4,18 @@ import {
   assignLyrics,
   estimateGrid,
   join,
+  joinRange,
   lyricsOf,
   move,
+  moveBoundary,
+  moveMany,
+  removeMany,
   quantize,
   resize,
   split,
   syllables,
   transpose,
+  transposeMany,
 } from '@/training/vocal/edit'
 import { stretch } from '@/training/vocal/stretch'
 import type { PartNote } from '@/training/vocal/part'
@@ -152,4 +157,44 @@ describe('time stretch', () => {
       expect(crossings(middle) / (middle.length / rate)).toBeCloseTo(220, -0.5)
     })
   }
+})
+
+describe('groups and boundaries', () => {
+  // 60 and 62 touch; 64 stands apart.
+  const part = [n(60, 0.5, 1.0), n(62, 1.0, 1.5), n(64, 1.8, 2.4)]
+
+  it('moves a picked run as one block, stopped by the notes not picked', () => {
+    const later = moveMany(part, [0, 1], 1)
+    expect(later.map((x) => [x.start, x.end])).toEqual([
+      [0.8, 1.3],
+      [1.3, 1.8],
+      [1.8, 2.4],
+    ])
+  })
+
+  it('transposes and removes a group', () => {
+    expect(transposeMany(part, [0, 2], -2).map((x) => x.midi)).toEqual([58, 62, 62])
+    expect(removeMany(part, [0, 2]).map((x) => x.midi)).toEqual([62])
+  })
+
+  it('moves a shared boundary: both notes, or the rest of the part along', () => {
+    const both = moveBoundary(part, 0, 1.2)
+    expect(both.map((x) => [x.start, x.end])).toEqual([
+      [0.5, 1.2],
+      [1.2, 1.5],
+      [1.8, 2.4],
+    ])
+    const ripple = moveBoundary(part, 0, 1.2, true)
+    expect(ripple.map((x) => [x.start, x.end])).toEqual([
+      [0.5, 1.2],
+      [1.2, 1.7],
+      [2, 2.6],
+    ])
+    // A free end only stretches up to the next note.
+    expect(moveBoundary(part, 1, 2)[1]!.end).toBe(1.8)
+  })
+
+  it('joins a run of notes', () => {
+    expect(joinRange(part, 0, 2)).toHaveLength(1)
+  })
 })
