@@ -185,6 +185,16 @@ const CASES: Record<string, SequenceEventSpec[]> = {
     seq.note(67, 1.2, { rate: 5, extentCents: 70 }),
     seq.pause(0.5),
   ],
+  'vibrato into a plain step': [
+    seq.pause(0.5),
+    seq.note(62, 0.8, VIBRATO),
+    seq.slide(62, 67, 0.3),
+    seq.note(67, 0.9, VIBRATO),
+    seq.note(69, 0.5),
+    ...[67, 65, 64, 65].map((m) => seq.note(m, 0.1)),
+    seq.note(64, 0.6),
+    seq.pause(0.4),
+  ],
   'repeated note after a short gap': [
     seq.pause(0.4),
     seq.note(62, 0.5),
@@ -249,5 +259,72 @@ describe('MELISMA reading on SwiftF0', () => {
     const grace = notes.find((n) => n.midi === 67)
     expect(grace?.ornament).toBe(true)
     expect(notes.filter((n) => !n.ornament).map((n) => n.midi)).toEqual([62, 64, 65])
+  }, 60_000)
+})
+
+describe('MELISMA reading on a recording made outside the test signals', () => {
+  // The phrase the deployed page was checked with: each note's vibrato starts at its own onset,
+  // so the 67 ends mid-swing straight into a plain 69, with no frame of slide between them.
+  function phrase(rate: number): Float32Array {
+    type Seg =
+      [midi: number | null, seconds: number, vibrato?: boolean] | ['slide', number, number, number]
+    const segs: Seg[] = [
+      [null, 0.5],
+      [62, 0.8, true],
+      ['slide', 62, 67, 0.3],
+      [67, 0.9, true],
+      [69, 0.5],
+      [67, 0.1],
+      [65, 0.1],
+      [64, 0.1],
+      [65, 0.1],
+      [64, 0.6],
+      [null, 0.4],
+    ]
+    const seconds = (s: Seg) => (s[0] === 'slide' ? s[3] : s[1])
+    const out = new Float32Array(Math.round(segs.reduce((sum, s) => sum + seconds(s), 0) * rate))
+    let i = 0
+    let phase = 0
+    let seed = 7
+    const noise = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 0.006
+    for (const s of segs) {
+      const length = Math.round(seconds(s) * rate)
+      for (let k = 0; k < length && i < out.length; k++, i++) {
+        if (s[0] === null) {
+          out[i] = noise()
+          continue
+        }
+        const midi =
+          s[0] === 'slide'
+            ? s[1] + ((s[2] - s[1]) * k) / length
+            : s[0] + (s[2] ? 0.6 * Math.sin((2 * Math.PI * 5.5 * k) / rate) : 0)
+        phase += (2 * Math.PI * 440 * 2 ** ((midi - 69) / 12)) / rate
+        out[i] =
+          0.25 * Math.sin(phase) + 0.12 * Math.sin(2 * phase) + 0.06 * Math.sin(3 * phase) + noise()
+      }
+    }
+    return out
+  }
+
+  it('cuts a vibrato note running straight into a plain one', async () => {
+    const samples = phrase(SAMPLE_RATE)
+    const frames = await detectFrames(samples, async (audio) => {
+      const out = await session.run({
+        audio: new ort.Tensor('float32', audio, [1, audio.length]),
+        fmin: new ort.Tensor('float32', Float32Array.of(FMIN), []),
+        fmax: new ort.Tensor('float32', Float32Array.of(FMAX), []),
+      })
+      return {
+        pitch: Float32Array.from(out.pitch!.data as Float32Array),
+        confidence: Float32Array.from(out.confidence!.data as Float32Array),
+      }
+    })
+    const { notes } = transcribeMelisma(
+      frames,
+      FRAME_PERIOD,
+      {},
+      detectOnsets(samples, SAMPLE_RATE),
+    )
+    expect(notes.map((n) => n.midi)).toEqual([62, 67, 69, 67, 65, 64, 65, 64])
   }, 60_000)
 })

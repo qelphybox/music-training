@@ -52,6 +52,19 @@ describe('MELISMA reading', () => {
     expect(peak.notes.map((n) => Math.round(n.cents / 100))).toEqual([60, 69, 62])
   })
 
+  it('cuts a vibrato note running straight into a plain one a tone up', () => {
+    // No slide frame between them: the wobble's centre is what the next note is compared with.
+    const cents: [number, number, number][] = []
+    for (let k = 0; k < Math.round(0.9 / HOP); k++) {
+      const c = 6700 + 60 * Math.sin(2 * Math.PI * 5.5 * k * HOP)
+      cents.push([c, c, HOP])
+    }
+    const frames = contour([silence(0.2), ...cents, hold(6900, 0.5), silence(0.2)])
+    const { notes } = melismaNotes(frames, HOP)
+    expect(notes.map((n) => Math.round(n.cents / 100))).toEqual([67, 69])
+    expect(notes[0]!.vibrato).not.toBeNull()
+  })
+
   it('finds the singer’s A4 and a step off the semitone grid', () => {
     const note = (cents: number, start: number): MelismaNote => ({
       start,

@@ -557,10 +557,15 @@ function notesOf(
   }
 
   // Not MELISMA's: a jump between two held frames (a step sung cleanly, with no frame of slide
-  // between at 16 ms) is a cut too. Vibrato swings that fast, so not inside it.
+  // between at 16 ms) is a cut too. Vibrato swings that fast, so inside it nothing is cut, and on
+  // its edge its centre is what the next frame is compared with: a vibrato note running straight
+  // into a plain one a tone away has no slide frame between them either.
+  // A plain frame next to the vibrato may still be at a crest of it: half the extent is allowed.
+  const level = (t: number) => (vibrato[t] ? a.central[t]! : m1[t]!)
   for (let t = from + 1; t < to; t++) {
     if (!mask[t - from] || !mask[t - 1 - from] || (vibrato[t] && vibrato[t - 1])) continue
-    if (Math.abs(m1[t]! - m1[t - 1]!) > ON_PITCH) cuts.add(t)
+    const swing = Math.max(vibrato[t] ? a.extent[t]! : 0, vibrato[t - 1] ? a.extent[t - 1]! : 0)
+    if (Math.abs(level(t) - level(t - 1)) > ON_PITCH + swing / 2) cuts.add(t)
   }
 
   // Pieces: runs of one kind of holding, broken at the cuts; slide frames belong to none.
