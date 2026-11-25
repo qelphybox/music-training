@@ -2,7 +2,9 @@
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import type { TakeSource } from '@/components/pitch/inkTake'
 import InkScroll from '@/components/pitch/InkScroll.vue'
-import PartPlayer from '@/components/pitch/PartPlayer.vue'
+import PartStrip from '@/components/pitch/PartStrip.vue'
+import PlayerSettings from '@/components/pitch/PlayerSettings.vue'
+import VocalIcon from '@/components/pitch/VocalIcon.vue'
 import { useExerciseSession } from '@/composables/useExerciseSession'
 import { useVocalPlayback, type PartSound } from '@/composables/useVocalPlayback'
 import { detectPitch, FRAME_PERIOD, VOICED } from '@/lib/swiftf0'
@@ -13,8 +15,8 @@ import { LEVELS, review, type Level, type Review } from '@/training/vocal/review
 import { contourSource, LiveTake } from './sources'
 import './vocal.css'
 
-// The student's side: hear the part (the teacher's recording or its notes), sing it — on your own
-// by default, or along with it in headphones — and see where the pitch landed.
+// The student's side in three steps: hear the part (the teacher's recording or its notes), sing
+// it — on your own by default, or along with it in headphones — and see where the pitch landed.
 
 const props = defineProps<{ id: string }>()
 
@@ -28,6 +30,8 @@ const along = ref(false)
 const level = ref<Level>(15)
 const result = shallowRef<Review | null>(null)
 const now = ref(0)
+/** Whether the part has been heard once: then singing becomes the main thing to do. */
+const listened = ref(false)
 
 const player = useVocalPlayback()
 // The take's samples are kept so the review can read them with SwiftF0.
@@ -62,28 +66,29 @@ onMounted(async () => {
   }
 })
 
-const status = computed(() => {
-  if (error.value) return error.value
+const step = computed(() => {
+  if (stage.value === 'done' || stage.value === 'reviewing') return 3
+  if (stage.value === 'singing' || stage.value === 'headphones') return 2
+  return 1
+})
+const seconds = computed(() => Math.round(span.value.to - span.value.from))
+const subtitle = computed(() => {
   if (session.error.value) return session.error.value
   switch (stage.value) {
     case 'loading':
       return 'Загружаю…'
-    case 'missing':
-      return 'Такой тренировки нет — проверь ссылку'
     case 'listening':
-      return 'Слушай, как звучит партия'
+      return player.settings.looping ? 'Играет кусок по кругу' : 'Слушай, как звучит партия'
     case 'headphones':
       return 'Нужны наушники'
     case 'singing':
-      return along.value
-        ? 'Пой вместе с партией'
-        : 'Пой — в своём темпе, нажми «Готово», когда закончишь'
+      return along.value ? 'Пой вместе с партией' : 'Пой в своём темпе — ноты подождут'
     case 'reviewing':
       return 'Разбираю…'
     case 'done':
       return 'Разбор'
     default:
-      return `${notes.value.length} нот · послушай, потом спой`
+      return `${notes.value.length} нот · ${seconds.value} с`
   }
 })
 
@@ -104,10 +109,11 @@ function listen(): void {
   })
 }
 
-// Playing ends by itself, by «стоп» or by the player's own controls: the page follows it.
+// Playing ends by itself, by «пауза» or by the strip: the page follows it.
 watch(player.playing, (playing) => {
   if (playing) return
   if (stage.value === 'listening') {
+    listened.value = true
     stage.value = result.value ? 'done' : 'ready'
     if (result.value) showResult(result.value)
     else now.value = player.now.value
@@ -149,6 +155,11 @@ async function sing(): Promise<void> {
 
 function confirmHeadphones(): void {
   headphonesConfirmed = true
+  stage.value = 'ready'
+  void sing()
+}
+function singAlone(): void {
+  along.value = false
   stage.value = 'ready'
   void sing()
 }
@@ -213,6 +224,8 @@ function again(): void {
   stage.value = 'ready'
 }
 
+// ─── The review in words ──────────────────────────────────────────────────────────────────────
+
 const verdict = computed(() => {
   const done = result.value
   if (!done) return ''
@@ -236,212 +249,639 @@ function centsText(cents: number | null): string {
   if (off === 0) return 'точно'
   if (off >= 1200 && off % 1200 < 50)
     return `на ${off / 1200 > 1.5 ? 'две октавы' : 'октаву'} ${cents < 0 ? 'ниже' : 'выше'}`
-  return `${cents < 0 ? '−' : '+'}${off} ¢`
+  return `${cents < 0 ? '−' : '+'}${off}¢`
 }
+const pitchName = (midi: number) => noteName(midi).replace(/\d+$/, '')
+const markLabel: Record<Mark, string> = {
+  hit: 'попал',
+  near: 'близко',
+  miss: 'мимо',
+  skip: 'не спета',
+}
+/** «7 из 9 нот точно. Ниже: ми; выше: фа.» — the review in one breath. */
+const summary = computed(() => {
+  const done = result.value
+  if (!done || !done.heard) return ''
+  const total = done.notes.length
+  const hits = done.notes.filter((n) => markOf(n.cents) === 'hit').length
+  const low: string[] = []
+  const high: string[] = []
+  let skipped = 0
+  for (const n of done.notes) {
+    const mark = markOf(n.cents)
+    if (mark === 'hit') continue
+    if (mark === 'skip') skipped++
+    else (n.cents! < 0 ? low : high).push(pitchName(n.note.midi))
+  }
+  const parts = [`${hits} из ${total} нот точно.`]
+  const list = (names: string[]) => [...new Set(names)].slice(0, 3).join(', ')
+  if (low.length) parts.push(`Ниже: ${list(low)}.`)
+  if (high.length) parts.push(`Выше: ${list(high)}.`)
+  if (skipped) parts.push(`Не спето: ${skipped}.`)
+  return parts.join(' ')
+})
+const levelNames: Record<Level, string> = { 15: 'Легко', 7: 'Средне', 2: 'Строго' }
 
-const levelNames: Record<Level, string> = { 15: 'Легко ±15¢', 7: 'Средне ±7¢', 2: 'Строго ±2¢' }
+// ─── Settings: a sheet on a phone, a panel beside the part on a wide screen ────────────────────
+
+const settingsDialog = ref<HTMLDialogElement | null>(null)
+function openSettings(): void {
+  settingsDialog.value?.showModal()
+}
 const busy = computed(() => ['loading', 'missing', 'reviewing'].includes(stage.value))
+const locked = computed(
+  () => busy.value || stage.value === 'singing' || stage.value === 'headphones',
+)
+const soundName = computed(() => (sound.value === 'recording' ? 'Голос педагога' : 'Ноты'))
 </script>
 
 <template>
-  <main id="main" class="vocal">
-    <header class="top">
-      <h1 class="title">{{ training?.title || 'Вокальная тренировка' }}</h1>
-      <p class="status" :class="{ error: error !== null || session.error.value !== null }">
-        {{ status }}
-      </p>
-    </header>
-
-    <template v-if="training">
-      <div class="sheet">
-        <InkScroll
-          :source="source"
-          :target="notes"
-          :now="now"
-          :mode="stage === 'done' ? 'card' : 'live'"
-          :span="span"
-          :voice="stage !== 'listening'"
-          label="Ноты плывут к линии, голос — мазок на ней"
-        />
-      </div>
-
-      <p v-if="stage === 'headphones'" class="notice">
-        Петь вместе с партией можно только в наушниках — иначе микрофон услышит партию вместо тебя.
-        <span class="row confirm">
-          <button type="button" class="action" @click="confirmHeadphones">Наушники надел</button>
-          <button type="button" class="action ghost" @click="stage = 'ready'">Отмена</button>
-        </span>
-      </p>
-
-      <section v-if="stage === 'done' && result" class="result">
-        <div class="score">
-          <p class="verdict">{{ verdict }}</p>
-          <div class="seal" aria-label="Оценка">{{ result.scores[level] }}</div>
+  <main id="main" class="vocal train">
+    <div class="train__wrap">
+      <header class="train__head">
+        <RouterLink to="/" class="ib train__back" aria-label="Все тренировки">
+          <VocalIcon name="back" />
+        </RouterLink>
+        <div class="train__titles">
+          <h1 class="serif">{{ training?.title || 'Вокальная тренировка' }}</h1>
+          <p class="muted" :class="{ 'error-text': session.error.value }" aria-live="polite">
+            {{ subtitle }}
+          </p>
         </div>
-        <div class="seg" role="group" aria-label="Допуск">
-          <button
-            v-for="l in LEVELS"
-            :key="l"
-            type="button"
-            :aria-pressed="level === l"
-            @click="level = l"
-          >
-            {{ levelNames[l] }} · {{ result.scores[l] }}%
-          </button>
-        </div>
-        <ol class="chips">
-          <li v-for="(n, i) in result.notes" :key="i" :class="markOf(n.cents)">
-            <span class="name">{{ noteName(n.note.midi) }}</span>
-            <span class="cents">{{ centsText(n.cents) }}</span>
+        <ol v-if="training" class="steps train__steps" aria-label="Шаги">
+          <li>
+            <span
+              v-if="step > 1 || listened"
+              class="done"
+              :aria-current="step === 1 ? 'step' : undefined"
+              ><VocalIcon name="check" />Послушай</span
+            >
+            <span v-else aria-current="step">Послушай</span>
+            <VocalIcon name="next" class="sep" />
+          </li>
+          <li>
+            <span v-if="step > 2" class="done"><VocalIcon name="check" />Спой</span>
+            <span v-else :aria-current="step === 2 ? 'step' : undefined">Спой</span>
+            <VocalIcon name="next" class="sep" />
+          </li>
+          <li>
+            <span :aria-current="step === 3 ? 'step' : undefined">Разбор</span>
           </li>
         </ol>
-        <p class="label">
-          Золотом — партия, тушью — как спел ты, растянуто под партию. Ноты по порядку: время не
-          оценивается.
-        </p>
+      </header>
+
+      <div v-if="training" class="train__grid">
+        <div class="train__left">
+          <div class="train__sheet">
+            <InkScroll
+              :source="source"
+              :target="notes"
+              :now="now"
+              :mode="stage === 'done' ? 'card' : 'live'"
+              :span="span"
+              :voice="stage !== 'listening'"
+              label="Ноты плывут к линии, голос — мазок на ней"
+            />
+          </div>
+          <PartStrip
+            :player="player"
+            :notes="notes"
+            :span="span"
+            :grid="grid"
+            :disabled="locked"
+            hint="протяни — повтор куска"
+          />
+          <div class="train__chips">
+            <button
+              type="button"
+              class="chip"
+              :disabled="locked"
+              :title="'Что звучит: ' + soundName"
+              @click="sound = sound === 'recording' ? 'notes' : 'recording'"
+            >
+              {{ soundName }}
+            </button>
+            <button
+              type="button"
+              class="chip"
+              :aria-pressed="player.settings.rate !== 1"
+              @click="openSettings"
+            >
+              Темп {{ Math.round(player.settings.rate * 100) }}%
+            </button>
+            <button
+              v-if="player.settings.loop"
+              type="button"
+              class="chip"
+              :aria-pressed="player.settings.looping"
+              @click="player.settings.looping = !player.settings.looping"
+            >
+              <VocalIcon name="loop" />Повтор
+            </button>
+            <button
+              type="button"
+              class="chip icon-only"
+              aria-label="Звук и темп: все настройки"
+              @click="openSettings"
+            >
+              <VocalIcon name="sliders" />
+            </button>
+          </div>
+        </div>
+
+        <div class="train__side">
+          <section v-if="stage === 'done' && result" class="train__review" aria-label="Разбор">
+            <div class="train__verdict">
+              <div class="train__verdict-text">
+                <h2 class="serif">{{ verdict }}</h2>
+                <p v-if="summary" class="muted">{{ summary }}</p>
+              </div>
+              <p
+                class="train__seal serif num"
+                :aria-label="`Оценка ${result.scores[level]} процентов`"
+              >
+                {{ result.scores[level] }}
+              </p>
+            </div>
+            <ol class="train__notes" aria-label="Ноты по порядку">
+              <li v-for="(n, i) in result.notes" :key="i" :class="markOf(n.cents)">
+                <VocalIcon
+                  :name="
+                    markOf(n.cents) === 'hit'
+                      ? 'check'
+                      : markOf(n.cents) === 'skip'
+                        ? 'close'
+                        : n.cents! < 0
+                          ? 'lower'
+                          : 'higher'
+                  "
+                  :label="markLabel[markOf(n.cents)]"
+                />
+                <b class="serif">{{ pitchName(n.note.midi) }}</b>
+                <span class="num">{{ centsText(n.cents) }}</span>
+              </li>
+            </ol>
+            <p class="muted train__foot">
+              ¢ — сотая доля полутона. Ритм и украшения не оцениваются. Золотом — партия, тушью —
+              как спето, растянуто под партию.
+            </p>
+            <div class="train__field">
+              <span class="muted train__small">Как строго судить</span>
+              <div class="seg wide train__levels" role="group" aria-label="Допуск">
+                <button
+                  v-for="l in LEVELS"
+                  :key="l"
+                  type="button"
+                  :aria-pressed="level === l"
+                  @click="level = l"
+                >
+                  <b>{{ levelNames[l] }}</b
+                  ><span class="num">±{{ l }}¢ · {{ result.scores[l] }}%</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <div v-if="stage === 'headphones'" class="notice train__phones" role="alert">
+            <p>
+              <b>Петь под партию — только в наушниках.</b> Иначе микрофон услышит партию вместо
+              тебя.
+            </p>
+            <div class="train__phones-act">
+              <button type="button" class="btn primary" @click="confirmHeadphones">
+                <VocalIcon name="headphones" />Наушники надел
+              </button>
+              <button type="button" class="btn text" @click="singAlone">Петь без партии</button>
+            </div>
+          </div>
+
+          <p v-if="stage === 'singing'" class="train__live" aria-live="polite">
+            <span aria-hidden="true" />Слышу тебя
+          </p>
+
+          <div class="dock train__dock">
+            <template v-if="stage === 'singing'">
+              <button type="button" class="btn primary" @click="finish">
+                <VocalIcon name="check" />Готово
+              </button>
+            </template>
+            <template v-else-if="stage === 'reviewing'">
+              <button type="button" class="btn primary" disabled>Разбираю…</button>
+            </template>
+            <template v-else-if="stage === 'done'">
+              <button type="button" class="btn" @click="listen">
+                <VocalIcon name="play" />Послушать
+              </button>
+              <button type="button" class="btn primary" @click="(again(), sing())">
+                <VocalIcon name="retry" />Спеть ещё раз
+              </button>
+            </template>
+            <template v-else-if="stage !== 'headphones'">
+              <button
+                type="button"
+                class="btn"
+                :class="{ primary: !listened || stage === 'listening' }"
+                :style="{ order: listened && stage !== 'listening' ? 2 : 1 }"
+                :disabled="busy"
+                @click="listen"
+              >
+                <VocalIcon :name="stage === 'listening' ? 'pause' : 'play'" />{{
+                  stage === 'listening' ? 'Пауза' : 'Послушать'
+                }}
+              </button>
+              <button
+                type="button"
+                class="btn"
+                :class="{ primary: listened && stage !== 'listening' }"
+                :style="{ order: listened && stage !== 'listening' ? 1 : 2 }"
+                :disabled="busy || stage === 'listening' || session.micState.value === 'starting'"
+                @click="sing"
+              >
+                <VocalIcon name="mic" />Спеть
+              </button>
+            </template>
+          </div>
+
+          <section class="train__panel" aria-labelledby="train-sound">
+            <h2 id="train-sound" class="serif">Звук и темп</h2>
+            <div class="seg wide" role="group" aria-label="Что звучит">
+              <button
+                type="button"
+                :aria-pressed="sound === 'recording'"
+                :disabled="locked"
+                @click="sound = 'recording'"
+              >
+                Голос педагога
+              </button>
+              <button
+                type="button"
+                :aria-pressed="sound === 'notes'"
+                :disabled="locked"
+                @click="sound = 'notes'"
+              >
+                Ноты
+              </button>
+            </div>
+            <PlayerSettings
+              :player="player"
+              :grid="grid"
+              :disabled="locked"
+              loop-hint="протяни по полосе под партией"
+            >
+              <label class="switch train__along">
+                <span class="train__grow"
+                  >Петь под партию<span class="sub">только в наушниках</span></span
+                >
+                <input v-model="along" type="checkbox" role="switch" :disabled="locked" />
+              </label>
+            </PlayerSettings>
+          </section>
+        </div>
+      </div>
+
+      <section v-else-if="stage === 'missing'" class="train__missing">
+        <h2 class="serif">Такой тренировки нет</h2>
+        <p class="muted">{{ error ?? 'Проверь ссылку или попроси её у педагога ещё раз.' }}</p>
+        <RouterLink class="btn" to="/vocal/new">Записать свою партию</RouterLink>
       </section>
 
-      <PartPlayer
-        :player="player"
-        :notes="notes"
-        :span="span"
-        :grid="grid"
-        :disabled="busy || stage === 'singing' || stage === 'headphones'"
-        play-label="Послушать"
-        @toggle="listen"
-      />
+      <p v-else class="muted train__loading" aria-live="polite">Загружаю…</p>
+    </div>
 
-      <div class="row">
-        <span class="label">Слушать:</span>
-        <div class="seg" role="group" aria-label="Что слушать">
-          <button type="button" :aria-pressed="sound === 'recording'" @click="sound = 'recording'">
-            Запись
-          </button>
-          <button type="button" :aria-pressed="sound === 'notes'" @click="sound = 'notes'">
-            Ноты
-          </button>
+    <dialog ref="settingsDialog" class="sheet-dialog" aria-labelledby="train-dialog">
+      <form method="dialog" class="train__dialog">
+        <span class="train__handle" aria-hidden="true" />
+        <div class="train__dialog-head">
+          <h2 id="train-dialog" class="serif">Звук и темп</h2>
+          <button class="btn text">Готово</button>
         </div>
-        <span class="label">Петь:</span>
-        <div class="seg" role="group" aria-label="Как петь">
-          <button
-            type="button"
-            :aria-pressed="!along"
-            :disabled="stage === 'singing'"
-            @click="along = false"
-          >
-            Сам
-          </button>
-          <button
-            type="button"
-            :aria-pressed="along"
-            :disabled="stage === 'singing'"
-            @click="along = true"
-          >
-            С партией
-          </button>
+        <div class="train__field">
+          <span class="muted train__small">Что звучит</span>
+          <div class="seg wide" role="group" aria-label="Что звучит">
+            <button
+              type="button"
+              :aria-pressed="sound === 'recording'"
+              :disabled="locked"
+              @click="sound = 'recording'"
+            >
+              Голос педагога
+            </button>
+            <button
+              type="button"
+              :aria-pressed="sound === 'notes'"
+              :disabled="locked"
+              @click="sound = 'notes'"
+            >
+              Ноты
+            </button>
+          </div>
         </div>
-      </div>
-
-      <div class="row">
-        <button v-if="stage === 'singing'" type="button" class="action big" @click="finish">
-          Готово
-        </button>
-        <button
-          v-else
-          type="button"
-          class="action big"
-          :disabled="
-            busy ||
-            stage === 'listening' ||
-            stage === 'headphones' ||
-            session.micState.value === 'starting'
-          "
-          @click="stage === 'done' ? (again(), sing()) : sing()"
+        <PlayerSettings
+          :player="player"
+          :grid="grid"
+          :disabled="locked"
+          loop-hint="протяни по полосе под партией"
         >
-          {{ stage === 'done' ? 'Ещё раз' : 'Петь' }}
-        </button>
-      </div>
-    </template>
-
-    <p v-else-if="stage === 'missing'" class="lead">
-      Попроси у педагога ссылку ещё раз.
-      <RouterLink to="/vocal/new">Записать свою партию</RouterLink>
-    </p>
+          <label class="switch train__along">
+            <span class="train__grow"
+              >Петь под партию<span class="sub"
+                >только в наушниках, иначе микрофон услышит партию</span
+              ></span
+            >
+            <input v-model="along" type="checkbox" role="switch" :disabled="locked" />
+          </label>
+        </PlayerSettings>
+      </form>
+    </dialog>
   </main>
 </template>
 
 <style scoped>
-.confirm {
-  margin-top: 0.6rem;
+.train__wrap {
+  width: min(1360px, 100%);
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 8px 40px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
-.result {
+.train__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.train__back {
+  margin-left: -10px;
+  color: var(--ink);
+}
+.train__titles {
+  flex: 1;
+  min-width: 14rem;
+}
+.train__titles h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+.train__titles p {
+  margin: 2px 0 0;
+  font-size: 14px;
+}
+.train__grid {
   display: grid;
-  gap: 0.6rem;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 48px;
+  align-items: start;
 }
-.score {
+.train__left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.train__sheet {
+  height: clamp(320px, 56dvh, 520px);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--sheet);
+}
+.train__chips {
+  display: none;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.train__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.train__review {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.train__verdict {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 16px;
 }
-.verdict {
-  margin: 0;
+.train__verdict-text {
   flex: 1;
-  font-family: Georgia, serif;
-  font-size: 1.6rem;
+}
+.train__verdict h2 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 600;
   line-height: 1.1;
 }
-.seal {
-  width: 3.2rem;
-  height: 3.2rem;
+.train__verdict-text p {
+  margin: 6px 0 0;
+  font-size: 15px;
+  text-wrap: pretty;
+}
+.train__seal {
+  flex: none;
+  width: 68px;
+  height: 68px;
+  margin: 0;
   display: grid;
   place-items: center;
   background: var(--seal);
-  color: #f3ebdd;
+  color: var(--on-ink);
+  font-size: 26px;
   font-weight: 600;
-  font-size: 1.4rem;
   transform: rotate(-3deg);
   box-shadow:
     inset 0 0 0 3px var(--seal),
     inset 0 0 0 4px rgb(243 235 221 / 70%);
 }
-.result .seg {
-  flex-wrap: wrap;
-  width: fit-content;
-}
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+.train__notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.chips li {
-  display: grid;
-  gap: 0.05rem;
-  padding: 0.35rem 0.55rem;
-  border-radius: 6px;
+.train__notes li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 10px;
   border: 1px solid currentColor;
-  font-size: 0.85rem;
-  line-height: 1.15;
+  font-size: 14px;
 }
-.chips .name {
+.train__notes li .icon {
+  width: 16px;
+  height: 16px;
+}
+.train__notes li b {
+  font-size: 15px;
   font-weight: 600;
 }
-.chips .cents {
-  font-variant-numeric: tabular-nums;
+.train__notes li span {
+  margin-left: auto;
 }
-.chips .hit {
+.train__notes .hit {
   color: var(--hit);
 }
-.chips .near {
+.train__notes .near {
   color: var(--near);
 }
-.chips .miss {
+.train__notes .miss {
   color: var(--seal);
 }
-.chips .skip {
+.train__notes .skip {
   color: var(--muted);
   border-style: dashed;
+}
+.train__foot {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.train__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.train__small {
+  font-size: 14px;
+}
+.train__levels button {
+  flex-direction: column;
+  gap: 0;
+  min-height: 52px;
+  font-size: 13px;
+  line-height: 1.25;
+}
+.train__levels b {
+  font-size: 15px;
+  font-weight: 600;
+}
+.train__phones {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.train__phones p {
+  margin: 0;
+}
+.train__phones-act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.train__live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin: 0;
+}
+.train__live span {
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+  background: #e0553a;
+}
+.train__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.train__panel h2,
+.train__dialog-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+.train__along {
+  border-top: 1px solid var(--line-soft);
+}
+.train__grow {
+  flex: 1;
+}
+.train__missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 40px 0;
+}
+.train__missing h2 {
+  margin: 0;
+  font-size: 26px;
+}
+.train__missing p {
+  margin: 0;
+}
+.train__loading {
+  padding: 40px 0;
+}
+.train__dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.train__handle {
+  align-self: center;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--control);
+}
+.train__dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: -6px;
+}
+
+@media (max-width: 1000px) {
+  .train__wrap {
+    padding: 0 16px 0;
+    gap: 14px;
+  }
+  .train__head {
+    padding: 8px 0 4px;
+    border-bottom: 0;
+  }
+  .train__steps {
+    flex-basis: 100%;
+  }
+  .train__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .train__sheet {
+    height: min(46dvh, 360px);
+  }
+  .train__chips {
+    display: flex;
+  }
+  .train__panel {
+    display: none;
+  }
+  /* The main buttons stay under the thumb. */
+  .train__dock {
+    position: sticky;
+    bottom: 0;
+    margin: 0 -16px;
+    padding: 12px 16px max(16px, env(safe-area-inset-bottom));
+    background: linear-gradient(to bottom, rgb(236 233 227 / 0%), var(--paper) 24%);
+  }
 }
 </style>

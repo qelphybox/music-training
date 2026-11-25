@@ -18,6 +18,8 @@
     "test:core:watch": "vitest --root src/audio-core"
   },
   "dependencies": {
+    "@fontsource-variable/golos-text": "^5.3.0",
+    "@fontsource-variable/literata": "^5.3.0",
     "@fontsource-variable/outfit": "^5.3.0",
     "@mediapipe/tasks-vision": "^1.0.1",
     "@phosphor-icons/vue": "^2.2.1",

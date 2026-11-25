@@ -18,9 +18,9 @@ import { FRAME, type Scale } from '@/training/vocal/melisma'
 import type { Contour, PartNote } from '@/training/vocal/part'
 
 /**
- * A part on a dark sheet, laid out like Vovious (docs/research/2026-11-25-vovious-editor.md): a
- * keyboard of notes down the left (tap one to hear it), the notes as bars with the voice over them
- * — orange, yellow where it slides, pink in vibrato — a time bar on top (its upper half moves the
+ * A part on a paper sheet, laid out like Vovious (docs/research/2026-11-25-vovious-editor.md): a
+ * keyboard of notes down the left (tap one to hear it), the notes as gold bars with the voice over
+ * them in ink — brown where it slides, plum in vibrato, hidden with `voice` off — a time bar on top (its upper half moves the
  * cursor, its lower half marks the stretch to repeat) and an overview of the whole part below (drag
  * the window to scroll, its edges to zoom). Bars and beats run down the sheet when there is a grid;
  * the lanes of the singer's mode are lighter.
@@ -59,6 +59,8 @@ const props = withDefaults(
     fitRequest?: number
     /** Bumped to zoom in time by `by`. */
     zoomRequest?: { readonly n: number; readonly by: number }
+    /** Whether the sung line is drawn over the notes. */
+    voice?: boolean
     label?: string
   }>(),
   {
@@ -74,6 +76,7 @@ const props = withDefaults(
     snapTo: null,
     fitRequest: 0,
     zoomRequest: () => ({ n: 0, by: 1 }),
+    voice: true,
     label: 'Партия',
   },
 )
@@ -88,33 +91,51 @@ const emit = defineEmits<{
 
 const NAMES = ['до', 'до♯', 'ре', 'ми♭', 'ми', 'фа', 'фа♯', 'соль', 'ля♭', 'ля', 'си♭', 'си']
 const BLACK = new Set([1, 3, 6, 8, 10])
+// Paper, like the student's sheet: gold notes, the voice in ink, the cursor in the seal's red.
 const C = {
-  sheet: '#16181b',
-  laneLight: '#1d2125',
-  laneDark: '#141619',
-  line: 'rgba(255,255,255,0.05)',
-  octave: 'rgba(255,255,255,0.16)',
-  bar: 'rgba(255,255,255,0.18)',
-  beat: 'rgba(255,255,255,0.06)',
-  text: '#8d9096',
-  bright: '#e8eaee',
-  note: '#3fbf7f',
-  ornament: '#5aa0ff',
-  voice: '#ff8a3d',
-  slide: '#ffd166',
-  vibrato: '#ff6fa3',
-  degree: 'rgba(200,205,215,0.4)',
-  offGrid: '#ff8a3d',
-  playhead: '#f4f4f4',
-  loop: 'rgba(199,154,42,0.14)',
-  loopBar: '#c79a2a',
-  loopOff: 'rgba(255,255,255,0.18)',
-  onBeat: '#3fbf7f',
-  offBeat: '#ff8a3d',
-  band: 'rgba(255,255,255,0.5)',
-  ruler: '#1d2024',
-  overview: '#121417',
+  sheet: '#f7f2e6',
+  laneLight: '#f3ecdd',
+  laneDark: '#ebe3d0',
+  line: 'rgba(28,27,25,0.05)',
+  octave: 'rgba(28,27,25,0.16)',
+  bar: 'rgba(120,98,52,0.45)',
+  beat: 'rgba(120,98,52,0.16)',
+  text: '#6b665e',
+  bright: '#1c1b19',
+  note: '#ecd595',
+  noteEdge: '#b8902f',
+  noteName: '#7a6224',
+  picked: '#d9b25a',
+  pickedEdge: '#1c1b19',
+  ornament: '#9ec0f0',
+  ornamentEdge: '#3b6fd1',
+  voice: 'rgba(28,27,25,0.55)',
+  slide: '#b26b00',
+  vibrato: '#8a3f8f',
+  offGrid: '#b26b00',
+  playhead: '#a8361c',
+  loop: 'rgba(217,178,90,0.12)',
+  loopDim: 'rgba(28,27,25,0.03)',
+  loopBar: '#d9b25a',
+  loopOff: 'rgba(28,27,25,0.18)',
+  onBeat: '#2f7d4f',
+  offBeat: '#b26b00',
+  preview: '#1c1b19',
+  band: 'rgba(28,27,25,0.55)',
+  ruler: '#efe7d6',
+  rulerLine: 'rgba(28,27,25,0.08)',
+  overview: '#efe7d6',
+  window: 'rgba(28,27,25,0.05)',
+  windowEdge: 'rgba(28,27,25,0.5)',
+  keyWhite: '#fbf8f1',
+  keyWhiteOut: '#e9e2d2',
+  keyBlack: '#3a3833',
+  keyBlackOut: '#7c776e',
+  keyText: '#1c1b19',
+  keyTextBlack: '#e9e4d8',
 }
+const SANS = '"Golos Text Variable", system-ui, sans-serif'
+const SERIF = '"Literata Variable", Georgia, serif'
 const GUTTER = 46
 const RULER = 30
 const OVERVIEW = 34
@@ -285,7 +306,7 @@ function draw(): void {
   }
 
   if (props.loop) {
-    c.fillStyle = props.looping ? C.loop : 'rgba(255,255,255,0.03)'
+    c.fillStyle = props.looping ? C.loop : C.loopDim
     c.fillRect(x(props.loop.from), top, x(props.loop.to) - x(props.loop.from), bottom - top)
   }
 
@@ -328,17 +349,15 @@ function draw(): void {
   for (let i = 0; i < notes.length; i++) {
     const note = notes[i]!
     if (note.end < from || (note.slideIn ?? note.start) > to) continue
-    const color = note.ornament ? C.ornament : C.note
+    const color = note.ornament ? C.ornamentEdge : C.noteEdge
     const on = props.editable && picked.has(i)
     const x0 = x(note.start)
     const x1 = Math.max(x0 + 2, x(note.end))
-    c.globalAlpha = on ? 0.6 : 0.34
-    c.fillStyle = color
+    c.fillStyle = on ? C.picked : note.ornament ? C.ornament : C.note
     roundRect(c, x0, y(note.midi) - barHeight / 2, x1 - x0, barHeight, Math.min(5, barHeight / 3))
     c.fill()
-    c.globalAlpha = 1
-    c.strokeStyle = on ? '#ffffff' : color
-    c.lineWidth = on ? 2 : 1.25
+    c.strokeStyle = on ? C.pickedEdge : color
+    c.lineWidth = on ? 2 : 1
     c.stroke()
     if (note.slideIn !== undefined && note.bend) {
       c.strokeStyle = color
@@ -360,8 +379,8 @@ function draw(): void {
     }
     const bar = x1 - x0
     if (bar > 26 && barHeight >= 9) {
-      c.fillStyle = color
-      c.font = `${Math.min(12, barHeight * 0.8)}px system-ui, sans-serif`
+      c.fillStyle = note.ornament ? C.ornamentEdge : C.noteName
+      c.font = `${Math.min(12, barHeight * 0.8)}px ${SERIF}`
       c.textBaseline = 'bottom'
       c.textAlign = 'left'
       const name = NAMES[((note.midi % 12) + 12) % 12]!
@@ -369,7 +388,7 @@ function draw(): void {
     }
     if (note.lyric) {
       c.fillStyle = C.bright
-      c.font = `600 ${Math.max(11, Math.min(14, lane * 0.9))}px system-ui, sans-serif`
+      c.font = `600 ${Math.max(12, Math.min(15, lane * 0.9))}px ${SERIF}`
       c.textBaseline = 'top'
       c.textAlign = 'left'
       c.fillText(note.lyric, x0 + 2, y(note.midi) + barHeight / 2 + 2)
@@ -378,14 +397,14 @@ function draw(): void {
 
   // The voice.
   const contour = props.contour
-  if (contour) {
+  if (contour && props.voice) {
     const first = Math.max(0, Math.floor((from - contour.start) * contour.frameRate) - 1)
     const last = Math.min(
       contour.midi.length,
       Math.ceil((to - contour.start) * contour.frameRate) + 2,
     )
-    c.globalAlpha = props.editable ? 0.75 : 1
-    c.lineWidth = 2
+    c.globalAlpha = 0.9
+    c.lineWidth = 1.5
     c.lineJoin = 'round'
     c.lineCap = 'round'
     for (let i = first + 1; i < last; i++) {
@@ -423,7 +442,7 @@ function draw(): void {
   // Notes mode: what a tap would do.
   if (props.editable && preview) {
     c.setLineDash([4, 3])
-    c.strokeStyle = '#ffffff'
+    c.strokeStyle = C.preview
     c.lineWidth = 2
     if (preview.kind === 'cut') {
       const note = notes[preview.index]
@@ -463,7 +482,7 @@ function draw(): void {
 
   if (props.now !== null && props.now >= from && props.now <= to) {
     c.fillStyle = C.playhead
-    c.fillRect(Math.round(x(props.now)), top, 1.5, bottom - top)
+    c.fillRect(Math.round(x(props.now)) - 1, top, 2, bottom - top)
   }
   c.restore()
 
@@ -472,11 +491,17 @@ function draw(): void {
     const pc = ((m % 12) + 12) % 12
     const inMode = modeClasses.value ? modeClasses.value.has(pc) : true
     const black = BLACK.has(pc)
-    c.fillStyle = black ? (inMode ? '#3a3e44' : '#25282c') : inMode ? '#cfd2d6' : '#7c8086'
+    c.fillStyle = black
+      ? inMode
+        ? C.keyBlack
+        : C.keyBlackOut
+      : inMode
+        ? C.keyWhite
+        : C.keyWhiteOut
     c.fillRect(0, y(m) - lane / 2 + 0.5, GUTTER - 2, Math.max(1, lane - 1))
     if (lane >= 9 || pc === 0) {
-      c.fillStyle = black ? '#d0d3d8' : '#1a1c1f'
-      c.font = `${Math.max(8, Math.min(11, lane * 0.75))}px system-ui, sans-serif`
+      c.fillStyle = black ? C.keyTextBlack : C.keyText
+      c.font = `${Math.max(9, Math.min(12, lane * 0.75))}px ${SERIF}`
       c.textAlign = 'right'
       c.textBaseline = 'middle'
       c.fillText(pc === 0 ? `до${Math.floor(m / 12) - 1}` : NAMES[pc]!, GUTTER - 6, y(m))
@@ -486,9 +511,9 @@ function draw(): void {
   // ── Time bar on top: cursor in the upper half, the stretch to repeat in the lower ──
   c.fillStyle = C.ruler
   c.fillRect(0, 0, width, RULER)
-  c.fillStyle = 'rgba(255,255,255,0.06)'
+  c.fillStyle = C.rulerLine
   c.fillRect(GUTTER, RULER / 2, right - GUTTER, 1)
-  c.font = '11px system-ui, sans-serif'
+  c.font = `11px ${SANS}`
   c.textBaseline = 'middle'
   c.textAlign = 'left'
   c.fillStyle = C.text
@@ -547,7 +572,7 @@ function draw(): void {
     const hi = Math.max(lo + 6, ...all.map((n) => n.midi))
     for (const note of all) {
       const oy = oTop + OVERVIEW - 6 - ((note.midi - lo) / (hi - lo)) * (OVERVIEW - 12)
-      c.fillStyle = note.ornament ? C.ornament : C.note
+      c.fillStyle = note.ornament ? C.ornamentEdge : C.noteEdge
       c.fillRect(
         view.overviewX(note.start),
         oy - 1,
@@ -558,12 +583,12 @@ function draw(): void {
   }
   const wx0 = view.overviewX(from)
   const wx1 = view.overviewX(to)
-  c.fillStyle = 'rgba(255,255,255,0.08)'
+  c.fillStyle = C.window
   c.fillRect(wx0, oTop + 2, wx1 - wx0, OVERVIEW - 4)
-  c.strokeStyle = 'rgba(255,255,255,0.45)'
-  c.lineWidth = 1
-  c.strokeRect(wx0 + 0.5, oTop + 2.5, wx1 - wx0 - 1, OVERVIEW - 5)
-  c.fillStyle = 'rgba(255,255,255,0.7)'
+  c.strokeStyle = C.windowEdge
+  c.lineWidth = 1.5
+  c.strokeRect(wx0 + 0.75, oTop + 2.75, wx1 - wx0 - 1.5, OVERVIEW - 5.5)
+  c.fillStyle = C.windowEdge
   c.fillRect(wx0, oTop + OVERVIEW / 2 - 6, 3, 12)
   c.fillRect(wx1 - 3, oTop + OVERVIEW / 2 - 6, 3, 12)
   if (props.now !== null) {
@@ -1071,6 +1096,7 @@ watch(
     props.looping,
     props.editable,
     props.mode,
+    props.voice,
   ],
   () => {
     if (props.mode !== 'notes') preview = null
@@ -1120,14 +1146,6 @@ defineExpose({ fit })
 
 <template>
   <div class="part">
-    <div class="part__bar">
-      <span class="part__summary">{{ summary }}</span>
-      <span class="part__legend" aria-hidden="true">
-        <i style="--c: #3fbf7f" class="box" />нота <i style="--c: #5aa0ff" class="box" />украшение
-        <i style="--c: #ff8a3d" />голос <i style="--c: #ffd166" />слайд
-        <i style="--c: #ff6fa3" />вибрато
-      </span>
-    </div>
     <canvas
       ref="canvas"
       class="part__canvas"
@@ -1147,48 +1165,9 @@ defineExpose({ fit })
 
 <style scoped>
 .part {
-  display: grid;
-  grid-template-rows: auto 1fr;
   width: 100%;
   height: 100%;
-  background: #16181b;
-  color: #c9ccd2;
-  font:
-    12px system-ui,
-    sans-serif;
-}
-.part__bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.3rem 1rem;
-  padding: 0.35rem 0.6rem;
-  border-bottom: 1px solid rgb(255 255 255 / 8%);
-}
-.part__summary {
-  font-variant-numeric: tabular-nums;
-  color: #e8eaee;
-}
-.part__legend {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem;
-  color: #8d9096;
-  flex: 1;
-}
-.part__legend i {
-  display: inline-block;
-  width: 14px;
-  height: 2px;
-  margin-left: 0.5rem;
-  background: var(--c);
-}
-.part__legend i.box {
-  height: 8px;
-  border: 1px solid var(--c);
-  background: color-mix(in srgb, var(--c) 35%, transparent);
-  border-radius: 2px;
+  background: #f7f2e6;
 }
 .part__canvas {
   display: block;

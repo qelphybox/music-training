@@ -1,154 +1,490 @@
-/* The vocal trainer's pages: paper and ink, like the ink sheet they are built around. */
+/*
+ * The vocal trainer's pages: paper and ink, gold for the part, a seal for the score. One sans for
+ * the controls (Golos Text) and one serif for titles, note names and words (Literata); both read
+ * Cyrillic well. Components here are shared by the teacher's and the student's pages.
+ */
+@import '@fontsource-variable/golos-text';
+@import '@fontsource-variable/literata';
+
 .vocal {
-  --paper: #e6e4df;
+  --paper: #ece9e3;
+  --surface: #f7f5f0;
+  --sheet: #f7f2e6;
+  --field: #fbf9f4;
   --ink: #1c1b19;
-  --muted: #6a665f;
+  --on-ink: #f7f5f0;
+  --muted: #5f5a52;
+  --faint: #6b665e;
+  --line: #ddd7cc;
+  --line-soft: #e3ddd1;
+  --control: #cfc9bd;
+  --gold: #ecd595;
+  --gold-strong: #d9b25a;
+  --gold-edge: #b8902f;
   --seal: #a8361c;
-  --hit: #3d7a3a;
-  --near: #b07d12;
-  display: grid;
-  /* One column no wider than the screen, whatever a row inside would like. */
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
+  --seal-dark: #7d2814;
+  --seal-tint: #f1e4de;
+  --hit: #2f7d4f;
+  --near: #8a5300;
+  --serif: 'Literata Variable', Literata, Georgia, serif;
+  --sans: 'Golos Text Variable', 'Golos Text', system-ui, sans-serif;
+
   min-height: 100dvh;
   width: 100%;
   max-width: 100vw;
   overflow-x: hidden;
-  padding: 0.75rem 1rem max(1rem, env(safe-area-inset-bottom));
   box-sizing: border-box;
-  gap: 0.85rem;
   background: var(--paper);
   color: var(--ink);
-  font-family: system-ui, sans-serif;
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.4;
 }
-.vocal .top {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.4rem 1rem;
+.vocal ::selection {
+  background: var(--gold);
 }
-.vocal .title {
-  margin: 0;
-  font-family: Georgia, serif;
-  font-size: 1.5rem;
-  font-weight: 600;
+.vocal :focus-visible {
+  outline: 2px solid var(--seal);
+  outline-offset: 2px;
 }
-.vocal .status {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.85rem;
-  flex: 1;
-  min-width: 12rem;
-}
-.vocal .status.error {
-  color: var(--seal);
-}
-.vocal .sheet {
-  position: relative;
-  min-height: 0;
-  height: min(52dvh, 520px);
-  border-radius: 4px;
-  overflow: hidden;
-  box-shadow:
-    0 1px 0 rgb(28 27 25 / 16%),
-    0 10px 30px rgb(0 0 0 / 12%);
-}
-.vocal .lead {
-  margin: 0;
-  max-width: 40rem;
-  line-height: 1.45;
-}
-.vocal .row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.6rem;
-}
-.vocal .label {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-.vocal .action {
-  min-height: 2.75rem;
-  padding: 0 1.1rem;
-  border-radius: 6px;
-  border: 1px solid var(--ink);
-  background: var(--ink);
-  color: #f2efe9;
+.vocal button,
+.vocal input,
+.vocal textarea,
+.vocal select {
   font: inherit;
-  font-weight: 600;
+  color: inherit;
+}
+.vocal button {
   cursor: pointer;
 }
-.vocal .action.big {
-  min-height: 3.25rem;
-  font-size: 1.1rem;
-  flex: 1;
+.vocal .serif {
+  font-family: var(--serif);
 }
-.vocal .action.ghost {
+.vocal .muted {
+  color: var(--muted);
+}
+.vocal .num {
+  font-variant-numeric: tabular-nums;
+}
+.vocal .visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.vocal .icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.vocal .error-text {
+  margin: 0;
+  color: var(--seal);
+  font-size: 14px;
+}
+
+/* ── Steps: quiet text, the current one underlined ── */
+.vocal .steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  color: var(--muted);
+}
+.vocal .steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.vocal .steps .sep {
+  width: 14px;
+  height: 14px;
+  color: #9a948a;
+}
+.vocal .steps .done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.vocal .steps .done .icon {
+  width: 16px;
+  height: 16px;
+  color: var(--hit);
+}
+.vocal .steps button {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
   background: transparent;
-  color: var(--ink);
+  color: var(--muted);
 }
-.vocal .action:disabled {
-  opacity: 0.45;
+.vocal .steps [aria-current] {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 7px;
+}
+
+/* ── Buttons ── */
+.vocal .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--ink);
+  white-space: nowrap;
+}
+/* The site's own .btn (a pill) is set apart here: these pages keep their own shape and size. */
+.vocal .btn {
+  height: auto;
+  font-size: 16px;
+  transition: background-color 0.15s ease-out;
+}
+.vocal .btn:hover:not(:disabled) {
+  border-color: var(--ink);
+  background: var(--line-soft);
+}
+.vocal .btn.primary {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.vocal .btn.primary:hover:not(:disabled) {
+  background: #34322e;
+}
+.vocal .btn.text:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  text-decoration-thickness: 2px;
+}
+.vocal .btn.quiet {
+  border-color: var(--control);
+  font-weight: 500;
+}
+.vocal .btn.quiet[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+}
+.vocal .btn.text {
+  border-color: transparent;
+  padding: 0 8px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.vocal .btn.small {
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 14px;
+}
+.vocal .btn:disabled,
+.vocal .ib:disabled,
+.vocal .chip:disabled {
+  opacity: 0.38;
   cursor: default;
 }
+.vocal .ib {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 10px;
+  border: 0;
+  background: transparent;
+}
+.vocal .ib:not(:disabled):hover {
+  background: var(--line-soft);
+}
+/* The big round buttons at the bottom of a phone screen. */
+.vocal .dock {
+  display: flex;
+  gap: 10px;
+}
+.vocal .dock > * {
+  flex: 1;
+  min-height: 60px;
+  border-radius: 30px;
+  font-size: 17px;
+}
+.vocal .dock > .primary {
+  flex: 1.4;
+}
+
+/* ── Segmented choice ── */
 .vocal .seg {
   display: inline-flex;
   border: 1px solid var(--ink);
-  border-radius: 6px;
+  border-radius: 10px;
   overflow: hidden;
 }
 .vocal .seg button {
-  min-height: 2.25rem;
-  padding: 0 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 14px;
   border: 0;
   background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-.vocal .seg button + button {
-  border-left: 1px solid var(--ink);
+  font-size: 14px;
 }
 .vocal .seg button[aria-pressed='true'] {
   background: var(--ink);
-  color: #f2efe9;
+  color: var(--on-ink);
 }
-.vocal .field {
-  min-height: 2.5rem;
-  padding: 0 0.7rem;
-  border: 1px solid rgb(28 27 25 / 40%);
-  border-radius: 6px;
-  background: #f3f1ec;
-  color: var(--ink);
-  font: inherit;
+.vocal .seg button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.vocal .seg kbd {
+  font: 12px var(--sans);
+  opacity: 0.6;
+}
+.vocal .seg.wide {
+  display: flex;
+}
+.vocal .seg.wide button {
   flex: 1;
-  min-width: 12rem;
 }
+
+/* ── Switch: a real checkbox ── */
+.vocal .switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.vocal .switch input {
+  appearance: none;
+  flex: none;
+  width: 40px;
+  height: 24px;
+  margin: 0;
+  border-radius: 12px;
+  background: var(--control);
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.15s ease-out;
+}
+.vocal .switch input::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: #fff;
+  transition: left 0.15s ease-out;
+}
+.vocal .switch input:checked {
+  background: var(--ink);
+}
+.vocal .switch input:checked::after {
+  left: 19px;
+}
+.vocal .switch input:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.vocal .switch .sub {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ── Chips ── */
+.vocal .chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border-radius: 22px;
+  border: 1px solid var(--control);
+  background: transparent;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.vocal .chip.icon-only {
+  padding: 0;
+}
+.vocal .chip[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+}
+
+/* ── Fields ── */
+.vocal .field {
+  display: block;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border: 1px solid var(--control);
+  border-radius: 10px;
+  background: var(--field);
+}
+.vocal textarea.field {
+  padding: 10px 12px;
+  resize: vertical;
+}
+.vocal input[type='range'] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--ink);
+}
+.vocal .knob {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 15px;
+}
+.vocal .knob small {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ── Notices: a tint, no side bar ── */
 .vocal .notice {
   margin: 0;
-  padding: 0.7rem 0.9rem;
-  border-left: 3px solid var(--seal);
-  background: rgb(168 54 28 / 7%);
-  line-height: 1.4;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--seal-tint);
+  color: #5a2a1d;
+  font-size: 14px;
+  line-height: 1.45;
 }
-.vocal .meter {
-  height: 0.5rem;
-  flex: 1;
-  min-width: 8rem;
-  border-radius: 999px;
-  background: rgb(28 27 25 / 12%);
-  overflow: hidden;
+
+/* ── Disclosures: a heading row with its summary, opening in place ── */
+.vocal details.disc {
+  border-top: 1px solid var(--line);
 }
-.vocal .meter span {
+.vocal details.disc:last-of-type {
+  border-bottom: 1px solid var(--line);
+}
+.vocal details.disc > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  list-style: none;
+  cursor: pointer;
+}
+.vocal details.disc > summary::-webkit-details-marker {
+  display: none;
+}
+.vocal details.disc > summary .chev {
+  transition: transform 0.15s ease-out;
+}
+.vocal details.disc[open] > summary .chev {
+  transform: rotate(180deg);
+}
+.vocal .disc-title {
   display: block;
-  height: 100%;
-  background: var(--ink);
-  transition: width 60ms linear;
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 600;
 }
-.vocal .clock {
-  font-variant-numeric: tabular-nums;
-  font-size: 1.4rem;
-  font-family: Georgia, serif;
+.vocal .disc-sum {
+  display: block;
+  font-size: 14px;
+  color: var(--muted);
+}
+.vocal .disc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0 0 20px;
+}
+
+/* ── Pop-overs (a <details> with a panel under its button) ── */
+.vocal details.pop {
+  position: relative;
+}
+.vocal details.pop > summary {
+  list-style: none;
+}
+.vocal details.pop > summary::-webkit-details-marker {
+  display: none;
+}
+.vocal .pop-panel {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: min(320px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 18px 20px;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgb(28 27 25 / 16%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.vocal .pop-panel.down {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
+/* ── A bottom sheet on a phone, a dialog elsewhere ── */
+.vocal dialog.sheet-dialog {
+  margin: auto auto 0;
+  width: 100%;
+  max-width: 480px;
+  max-height: 88dvh;
+  box-sizing: border-box;
+  padding: 10px 20px max(24px, env(safe-area-inset-bottom));
+  border: 0;
+  border-radius: 22px 22px 0 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--sans);
+}
+.vocal dialog.sheet-dialog::backdrop {
+  background: rgb(28 27 25 / 42%);
+}
+@media (min-width: 720px) {
+  .vocal dialog.sheet-dialog {
+    margin: auto;
+    border-radius: 18px;
+  }
+}
+
+/* ── Level meter and clock while recording ── */
+.vocal .level {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 64px;
+}
+.vocal .level span {
+  width: 8px;
+  border-radius: 4px;
+  background: currentColor;
 }
