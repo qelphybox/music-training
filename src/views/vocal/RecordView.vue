@@ -161,6 +161,14 @@ function togglePlay(): void {
   else
     void player.play({ sound: sound.value, notes: notes.value, span: span.value, grid: grid.value })
 }
+
+// The sound is rendered while the teacher edits, not when play is pressed.
+let prepareTimer = 0
+watch([notes, sound, () => player.settings.rate], () => {
+  clearTimeout(prepareTimer)
+  if (!notes.value.length) return
+  prepareTimer = window.setTimeout(() => void player.prepare(sound.value, notes.value), 400)
+})
 const loopLabel = computed(() => {
   const loop = player.settings.loop
   if (!loop || !grid.value) return 'Цикл'

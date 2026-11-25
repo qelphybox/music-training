@@ -1,4 +1,5 @@
 import { onScopeDispose, reactive, ref, watch } from 'vue'
+import { audibleTime } from '@/lib/audibleTime'
 import type { Grid } from '@/training/vocal/edit'
 import { monoOf, type PartNote } from '@/training/vocal/part'
 import { stretch } from '@/training/vocal/stretch'
@@ -216,7 +217,8 @@ export function useVocalPlayback() {
       }
       stopAll = () => finish(false)
       const tick = () => {
-        let at = from + Math.max(0, ctx.currentTime - t0) * rate
+        // What is heard, not what is scheduled: on Bluetooth the two are a fifth of a second apart.
+        let at = from + Math.max(0, audibleTime(ctx) - t0) * rate
         if (loop && at >= loop.to) at = loop.from + ((at - loop.from) % (loop.to - loop.from))
         now.value = at
         request.onTick?.(at)
@@ -233,6 +235,18 @@ export function useVocalPlayback() {
     stopAll?.()
     playing.value = false
     preparing.value = false
+  }
+
+  /**
+   * Renders the sound ahead, so pressing play does not wait for it: the notes are synthesised again
+   * after every edit, a new speed stretches the recording.
+   */
+  async function prepare(sound: PartSound, notes: readonly PartNote[]): Promise<void> {
+    try {
+      await bufferOf(sound, notes, settings.rate)
+    } catch {
+      // Play will try again and say so.
+    }
   }
 
   /** A short tone of `midi`, for the keyboard down the sheet. */
@@ -271,7 +285,7 @@ export function useVocalPlayback() {
     void context?.close()
   })
 
-  return { playing, preparing, now, settings, load, play, stop, seek, previewNote }
+  return { playing, preparing, now, settings, load, play, stop, seek, previewNote, prepare }
 }
 
 /** One metronome click at `when`: higher on the downbeat. */

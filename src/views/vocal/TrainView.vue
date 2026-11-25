@@ -59,6 +59,7 @@ onMounted(async () => {
     await player.load(await response.arrayBuffer())
     now.value = span.value.from
     player.now.value = span.value.from
+    void player.prepare(sound.value, notes.value)
     stage.value = 'ready'
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : 'Тренировка не загрузилась'
@@ -110,6 +111,11 @@ function listen(): void {
 }
 
 // Playing ends by itself, by «пауза» or by the strip: the page follows it.
+// Render the other sound (or another speed) ahead, so play starts at once.
+watch([sound, () => player.settings.rate], () => {
+  if (training.value) void player.prepare(sound.value, notes.value)
+})
+
 watch(player.playing, (playing) => {
   if (playing) return
   if (stage.value === 'listening') {

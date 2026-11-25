@@ -1,3 +1,4 @@
+import { audibleTime } from '@/lib/audibleTime'
 import { computed, onScopeDispose, readonly, ref, shallowRef, watch, type Ref } from 'vue'
 import {
   BeatGrid,
@@ -678,13 +679,4 @@ function peakDb(peaks: Float32Array, count: number): number {
 
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
-}
-
-/** The context time now reaching the speakers; `currentTime` runs ahead by the output latency. */
-function audibleTime(context: AudioContext): number {
-  const { contextTime, performanceTime } = context.getOutputTimestamp()
-  if (contextTime === undefined || performanceTime === undefined || performanceTime === 0) {
-    return context.currentTime - (context.outputLatency || 0)
-  }
-  return contextTime + (performance.now() - performanceTime) / 1000
 }
